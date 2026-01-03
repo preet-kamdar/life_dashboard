@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // For Arrow Keys & ESC
+import 'package:life_dashboard/database_helper.dart';
 import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
 import 'dart:math';
 
 class JournalScreen extends StatefulWidget {
@@ -12,441 +10,225 @@ class JournalScreen extends StatefulWidget {
   State<JournalScreen> createState() => _JournalScreenState();
 }
 
-enum InputMode { terminal, editorInsert, editorCommand }
-
 class _JournalScreenState extends State<JournalScreen> {
-  // --- STATE ---
   List<Map<String, dynamic>> _entries = [];
-  final List<ConsoleLine> _consoleOutput = [];
-
-  InputMode _mode = InputMode.terminal;
-
-  // TERMINAL INPUT & HISTORY
-  final TextEditingController _cmdController = TextEditingController();
-  final ScrollController _terminalScroll = ScrollController();
-  final FocusNode _terminalFocus = FocusNode();
-
-  // HISTORY ENGINE
-  final List<String> _commandHistory = [];
-  int _historyIndex = 0;
-
-  // EDITOR INPUT
-  String _pendingTitle = "";
-  final TextEditingController _bodyController = TextEditingController();
-  final FocusNode _editorFocus = FocusNode();
-
-  // VIM COMMAND INPUT
-  final TextEditingController _vimCmdController = TextEditingController();
-  final FocusNode _vimCmdFocus = FocusNode();
-
   final Random _rng = Random();
+  final TextEditingController _cmdController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+
+  String _consoleOutput = "> Ready. try: git commit \"msg\"";
 
   @override
   void initState() {
     super.initState();
-    _loadEntries();
-    _printSystemMsg("LifeOS Kernel v11.1-history-fix loaded.");
-    _printSystemMsg("Type 'git help' for commands.");
-
-    // --- NEW KEY INTERCEPTION LOGIC ---
-    _terminalFocus.onKeyEvent = (node, event) {
-      if (event is KeyDownEvent) {
-        if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-          _historyUp();
-          return KeyEventResult.handled; // Stop TextField from moving cursor
-        } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-          _historyDown();
-          return KeyEventResult.handled; // Stop TextField from moving cursor
-        }
-      }
-      return KeyEventResult.ignored; // Let other keys (letters) pass through
-    };
+    _loadJournal();
   }
 
-  // --- HISTORY LOGIC ---
-
-  void _historyUp() {
-    if (_commandHistory.isEmpty) return;
-    if (_historyIndex > 0) {
-      setState(() {
-        _historyIndex--;
-        _cmdController.text = _commandHistory[_historyIndex];
-        // Move cursor to end
-        _cmdController.selection = TextSelection.fromPosition(
-            TextPosition(offset: _cmdController.text.length));
-      });
-    }
+  Future<void> _loadJournal() async {
+    final data = DatabaseHelper.loadJournal();
+    if (mounted) setState(() => _entries = data);
   }
 
-  void _historyDown() {
-    if (_commandHistory.isEmpty) return;
-    if (_historyIndex < _commandHistory.length - 1) {
-      setState(() {
-        _historyIndex++;
-        _cmdController.text = _commandHistory[_historyIndex];
-        _cmdController.selection = TextSelection.fromPosition(
-            TextPosition(offset: _cmdController.text.length));
-      });
-    } else {
-      // We are at the bottom, clear the line for new input
-      setState(() {
-        _historyIndex = _commandHistory.length; // Point to "new" entry
-        _cmdController.clear();
-      });
-    }
-  }
-
-  // --- DATA LOGIC ---
-
-  Future<void> _loadEntries() async {
-    final prefs = await SharedPreferences.getInstance();
-    final String? data = prefs.getString('git_journal_entries');
-    if (data != null) {
-      setState(() {
-        _entries = List<Map<String, dynamic>>.from(jsonDecode(data));
-        _consoleOutput.add(
-            ConsoleLine(text: "Recent history:", color: Colors.blueAccent));
-        _listRecentEntries();
-      });
-    }
-  }
-
-  Future<void> _saveEntry(String title, String body) async {
-    final newHash = _generateHash();
-    final newEntry = {
-      'hash': newHash,
-      'date': DateTime.now().toIso8601String(),
-      'title': title,
-      'body': body,
-    };
-
-    setState(() {
-      _entries.insert(0, newEntry);
-      _consoleOutput.add(ConsoleLine(
-          text: "[master $newHash] $title", color: Colors.greenAccent));
-      final lines = body.split('\n').length;
-      _consoleOutput.add(ConsoleLine(
-          text: " 1 file changed, $lines insertions(+)",
-          color: Colors.white54));
-    });
-
-    final prefs = await SharedPreferences.getInstance();
-    prefs.setString('git_journal_entries', jsonEncode(_entries));
-    _scrollToBottom();
-  }
-
-  Future<void> _deleteEntry(String hash) async {
-    final index = _entries.indexWhere((e) => e['hash'] == hash);
-    if (index != -1) {
-      setState(() {
-        _entries.removeAt(index);
-        _consoleOutput.add(
-            ConsoleLine(text: "Deleted commit $hash", color: Colors.redAccent));
-      });
-      final prefs = await SharedPreferences.getInstance();
-      prefs.setString('git_journal_entries', jsonEncode(_entries));
-    } else {
-      _consoleOutput.add(ConsoleLine(
-          text: "fatal: ambiguous argument '$hash': unknown revision",
-          color: Colors.red));
-    }
-    _scrollToBottom();
-  }
-
-  String _generateHash() {
-    const chars = 'abcdef0123456789';
-    return List.generate(7, (index) => chars[_rng.nextInt(chars.length)])
-        .join();
-  }
-
-  // --- MODE SWITCHING ---
-
-  void _enterInsertMode(String title) {
-    setState(() {
-      _pendingTitle = title;
-      _mode = InputMode.editorInsert;
-      _bodyController.clear();
-      _vimCmdController.clear();
-    });
-    Future.delayed(
-        const Duration(milliseconds: 50), () => _editorFocus.requestFocus());
-  }
-
-  void _enterCommandMode() {
-    setState(() {
-      _mode = InputMode.editorCommand;
-      _vimCmdController.text = ":";
-      _vimCmdController.selection = const TextSelection.collapsed(offset: 1);
-    });
-    Future.delayed(
-        const Duration(milliseconds: 50), () => _vimCmdFocus.requestFocus());
-  }
-
-  void _returnToInsertMode() {
-    setState(() {
-      _mode = InputMode.editorInsert;
-    });
-    Future.delayed(
-        const Duration(milliseconds: 50), () => _editorFocus.requestFocus());
-  }
-
-  void _exitEditorToTerminal() {
-    setState(() {
-      _mode = InputMode.terminal;
-      _pendingTitle = "";
-      _bodyController.clear();
-    });
-    Future.delayed(const Duration(milliseconds: 50), () {
-      _terminalFocus.requestFocus();
-      _scrollToBottom();
-    });
-  }
-
-  // --- KEYBOARD HANDLING (ESC) ---
-
-  void _handleEditorKeyEvent(RawKeyEvent event) {
-    if (event is RawKeyDownEvent &&
-        event.logicalKey == LogicalKeyboardKey.escape) {
-      _enterCommandMode();
-    }
-  }
-
-  void _handleCommandKeyEvent(RawKeyEvent event) {
-    if (event is RawKeyDownEvent &&
-        event.logicalKey == LogicalKeyboardKey.escape) {
-      _returnToInsertMode();
-    }
-  }
-
-  // --- COMMAND PARSING ---
-
-  void _handleTerminalCommand(String rawInput) {
+  // --- COMMAND PROCESSOR ---
+  void _handleCommand(String rawInput) async {
+    _cmdController.clear();
     if (rawInput.trim().isEmpty) return;
 
-    String input = rawInput.trim();
-
-    // SAVE TO HISTORY
-    if (_commandHistory.isEmpty || _commandHistory.last != input) {
-      _commandHistory.add(input);
-    }
-    _historyIndex = _commandHistory.length; // Reset index to "new"
-
-    _consoleOutput
-        .add(ConsoleLine(text: "user@lifeos:~\$ $input", color: Colors.white));
-    _cmdController.clear();
-
-    if (input.startsWith("git ")) {
+    // 1. NORMALIZE INPUT
+    // This removes 'git ' from the start if present, handling your habit
+    var input = rawInput.trim();
+    if (input.toLowerCase().startsWith('git ')) {
       input = input.substring(4).trim();
-    } else if (input.startsWith("vim ")) {
-      input = "commit ${input.substring(4).trim()}";
     }
 
     final parts = input.split(' ');
     final command = parts[0].toLowerCase();
 
-    switch (command) {
-      case 'help':
-        _printSystemMsg("Git Commands:");
-        _printSystemMsg("  git commit <title> : Open editor");
-        _printSystemMsg("  git log            : Show commit titles");
-        _printSystemMsg("  git show <hash>    : Show full details");
-        _printSystemMsg("  git rm <hash>      : Delete entry");
-        _printSystemMsg("  git clear          : Clear screen");
-        break;
+    setState(() => _consoleOutput = "> $rawInput...");
 
-      case 'clear':
-        setState(() => _consoleOutput.clear());
-        break;
-
-      case 'log':
-        _listEntriesOneline();
-        break;
-
-      case 'show':
-        if (parts.length < 2) {
-          _printSystemMsg("usage: git show <hash>", color: Colors.red);
-        } else {
-          _showSpecificEntry(parts[1]);
-        }
-        break;
-
-      case 'rm':
-        if (parts.length < 2) {
-          _printSystemMsg("usage: git rm <hash>", color: Colors.red);
-        } else {
-          _deleteEntry(parts[1]);
-        }
-        break;
-
-      case 'commit':
-        if (parts.length < 2) {
-          _printSystemMsg("usage: git commit <title>", color: Colors.red);
+    try {
+      switch (command) {
+        case 'commit':
+          await _parseCommit(input);
           break;
-        }
-        String title = parts.sublist(1).join(' ');
-        if (title.startsWith('"') && title.endsWith('"')) {
-          title = title.substring(1, title.length - 1);
-        }
-        _enterInsertMode(title);
-        break;
-
-      default:
-        _printSystemMsg("git: '$command' is not a git command. See 'git help'.",
-            color: Colors.red);
-    }
-    _scrollToBottom();
-    _terminalFocus.requestFocus();
-  }
-
-  void _handleVimCommand(String value) {
-    final cmd = value.trim().replaceAll(':', '');
-
-    if (cmd == 'wq') {
-      _saveEntry(_pendingTitle, _bodyController.text);
-      _exitEditorToTerminal();
-    } else if (cmd == 'q!') {
-      _printSystemMsg("Commit aborted.", color: Colors.redAccent);
-      _exitEditorToTerminal();
-    } else if (cmd == 'w') {
-      _printSystemMsg("Data saved.", color: Colors.grey);
-      _returnToInsertMode();
-    } else {
-      _returnToInsertMode();
-    }
-  }
-
-  // --- UTILS ---
-
-  void _printSystemMsg(String text, {Color color = Colors.grey}) {
-    setState(() => _consoleOutput.add(ConsoleLine(text: text, color: color)));
-  }
-
-  void _listRecentEntries() {
-    if (_entries.isEmpty) return;
-    int count = 0;
-    for (var entry in _entries) {
-      if (count >= 5) break;
-      final hash = entry['hash'];
-      final title = entry['title'] ?? entry['text'] ?? "";
-      _consoleOutput
-          .add(ConsoleLine(text: "$hash $title", color: Colors.yellowAccent));
-      count++;
-    }
-  }
-
-  void _listEntriesOneline() {
-    if (_entries.isEmpty) {
-      _printSystemMsg("No commits yet.");
-      return;
-    }
-    for (var entry in _entries) {
-      final hash = entry['hash'];
-      final title = entry['title'] ?? entry['text'] ?? "";
-      _consoleOutput
-          .add(ConsoleLine(text: "$hash $title", color: Colors.yellowAccent));
-    }
-    _printSystemMsg("(END)");
-  }
-
-  void _showSpecificEntry(String hash) {
-    final index = _entries.indexWhere((e) => e['hash'] == hash);
-    if (index == -1) {
-      _printSystemMsg("fatal: bad object $hash", color: Colors.red);
-      return;
-    }
-
-    final entry = _entries[index];
-    final date = DateTime.parse(entry['date']);
-    final dateStr = DateFormat('EEE MMM d HH:mm:ss yyyy').format(date);
-    final title = entry['title'] ?? "Legacy Commit";
-    final body = entry['body'] ?? entry['text'] ?? "";
-
-    _consoleOutput.add(
-        ConsoleLine(text: "commit ${entry['hash']}", color: Colors.yellow));
-    _consoleOutput.add(ConsoleLine(
-        text: "Author: User <admin@lifeos>", color: Colors.white54));
-    _consoleOutput
-        .add(ConsoleLine(text: "Date:   $dateStr", color: Colors.white54));
-    _consoleOutput.add(ConsoleLine(text: ""));
-    _consoleOutput.add(
-        ConsoleLine(text: "    $title", color: Colors.white, isBold: true));
-    if (body.isNotEmpty) {
-      _consoleOutput.add(ConsoleLine(text: ""));
-      _consoleOutput.add(ConsoleLine(text: body, color: Colors.white70));
-    }
-    _consoleOutput.add(ConsoleLine(text: ""));
-    _printSystemMsg("(END)");
-  }
-
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_terminalScroll.hasClients) {
-        _terminalScroll.animateTo(
-          _terminalScroll.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+        case 'rm':
+        case 'delete':
+          if (parts.length < 2) throw "Usage: git rm <hash>";
+          await _deleteEntry(parts[1]);
+          setState(() => _consoleOutput = "> Deleted object ${parts[1]}");
+          break;
+        case 'clear':
+        case 'cls':
+          setState(() => _consoleOutput = "> Console cleared.");
+          break;
+        case 'status':
+        case 'log':
+          setState(() => _consoleOutput =
+              "> On branch master. ${_entries.length} commits.");
+          break;
+        case 'help':
+          setState(() => _consoleOutput =
+              "Usage: git commit \"Title\" -m \"Body\" | git rm <hash>");
+          break;
+        default:
+          setState(
+              () => _consoleOutput = "> git: '$command' is not a git command.");
       }
-    });
+    } catch (e) {
+      setState(() => _consoleOutput = "> fatal: $e");
+    }
+  }
+
+  Future<void> _parseCommit(String input) async {
+    // Syntax: commit "Title" -m "Body"
+    final titleRegex = RegExp(r'commit\s+"([^"]+)"');
+    final bodyRegex = RegExp(r'-m\s+"([^"]+)"');
+
+    final titleMatch = titleRegex.firstMatch(input);
+    final bodyMatch = bodyRegex.firstMatch(input);
+
+    if (titleMatch == null) {
+      throw "Usage: git commit \"Title\" [-m \"Description\"]";
+    }
+
+    final title = titleMatch.group(1) ?? "Untitled";
+    final body = bodyMatch?.group(1) ?? "";
+    final hash = _generateGitHash();
+    final date = DateTime.now().toIso8601String();
+
+    await DatabaseHelper.saveJournalEntry(hash, date, title, body);
+    await _loadJournal();
+
+    setState(() => _consoleOutput = "> [master $hash] $title");
+
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(0,
+          duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+    }
+  }
+
+  Future<void> _deleteEntry(String id) async {
+    await DatabaseHelper.deleteJournalEntry(id);
+    await _loadJournal();
+  }
+
+  String _generateGitHash() {
+    const chars = 'abcdef0123456789';
+    return List.generate(7, (index) => chars[_rng.nextInt(chars.length)])
+        .join();
+  }
+
+  String _formatDate(String iso) {
+    try {
+      final dt = DateTime.parse(iso);
+      return DateFormat('MMM dd, HH:mm').format(dt);
+    } catch (e) {
+      return iso;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // 1. TERMINAL MODE (Standard)
-    if (_mode == InputMode.terminal) {
-      return GestureDetector(
-        onTap: () => _terminalFocus.requestFocus(),
-        child: Scaffold(
-          backgroundColor: const Color(0xFF1E1E1E),
-          body: SafeArea(
-            child: Column(
-              children: [
-                Expanded(
-                  child: ListView.builder(
-                    controller: _terminalScroll,
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _consoleOutput.length,
-                    itemBuilder: (context, index) {
-                      final line = _consoleOutput[index];
-                      return Text(
-                        line.text,
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          color: line.color,
-                          fontSize: 14,
-                          fontWeight:
-                              line.isBold ? FontWeight.bold : FontWeight.normal,
-                        ),
-                      );
-                    },
-                  ),
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Scaffold(
+      backgroundColor: colorScheme.surface,
+      body: Column(
+        children: [
+          Expanded(
+            child: CustomScrollView(
+              controller: _scrollController,
+              slivers: [
+                SliverAppBar.large(
+                  title: const Text("Repository Log"),
+                  centerTitle: false,
                 ),
+                if (_entries.isEmpty)
+                  SliverFillRemaining(
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.terminal,
+                              size: 64,
+                              color: colorScheme.outline.withOpacity(0.5)),
+                          const SizedBox(height: 16),
+                          Text("Repository is empty",
+                              style: TextStyle(color: colorScheme.outline)),
+                          const SizedBox(height: 8),
+                          Text(
+                              "Try: git commit \"First log\" -m \"Hello world\"",
+                              style: TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 10,
+                                  color: colorScheme.outline)),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => _buildLogItem(context, index),
+                      childCount: _entries.length,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Container(
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5),
+              border:
+                  Border(top: BorderSide(color: colorScheme.outlineVariant)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
                 Container(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: const BoxDecoration(
-                    border: Border(top: BorderSide(color: Colors.white24)),
-                    color: Colors.black26,
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  color: isDark ? Colors.black : Colors.grey[300],
+                  child: Text(
+                    _consoleOutput,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 10,
+                      color: isDark ? Colors.greenAccent : Colors.black87,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
+                ),
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Row(
                     children: [
-                      const Text("user@lifeos:~\$ ",
+                      Text("\$ ",
                           style: TextStyle(
                               fontFamily: 'monospace',
-                              color: Colors.greenAccent,
-                              fontWeight: FontWeight.bold)),
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.primary)),
                       Expanded(
                         child: TextField(
                           controller: _cmdController,
-                          focusNode: _terminalFocus,
-                          style: const TextStyle(
-                              fontFamily: 'monospace', color: Colors.white),
-                          cursorColor: Colors.white,
-                          cursorWidth: 8,
+                          style: TextStyle(
+                              fontFamily: 'monospace',
+                              color: colorScheme.onSurface),
                           decoration: const InputDecoration(
-                              border: InputBorder.none, isDense: true),
-                          onSubmitted: _handleTerminalCommand,
+                            border: InputBorder.none,
+                            hintText: "git command...",
+                            isDense: true,
+                          ),
+                          onSubmitted: _handleCommand,
                         ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.send_rounded, size: 20),
+                        onPressed: () => _handleCommand(_cmdController.text),
+                        color: colorScheme.primary,
                       ),
                     ],
                   ),
@@ -454,101 +236,114 @@ class _JournalScreenState extends State<JournalScreen> {
               ],
             ),
           ),
-        ),
-      );
-    }
-
-    // 2. EDITOR MODE (Insert or Command)
-    return Scaffold(
-      backgroundColor: const Color(0xFF1E1E1E),
-      body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Status Header
-            Container(
-              padding: const EdgeInsets.all(8),
-              color: Colors.blueAccent.withOpacity(0.2),
-              child: Row(
-                children: [
-                  const Text("git-commit.txt",
-                      style: TextStyle(
-                          fontFamily: 'monospace', color: Colors.white70)),
-                  const Spacer(),
-                  Text("Subject: $_pendingTitle",
-                      style: const TextStyle(
-                          fontFamily: 'monospace', color: Colors.white70)),
-                ],
-              ),
-            ),
-
-            // MAIN TEXT EDITOR
-            Expanded(
-              child: RawKeyboardListener(
-                focusNode: FocusNode(),
-                onKey: _handleEditorKeyEvent,
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: TextField(
-                    controller: _bodyController,
-                    focusNode: _editorFocus,
-                    enabled: _mode == InputMode.editorInsert,
-                    maxLines: null,
-                    expands: true,
-                    style: const TextStyle(
-                        fontFamily: 'monospace',
-                        color: Colors.white,
-                        fontSize: 16),
-                    cursorColor: Colors.greenAccent,
-                    decoration: const InputDecoration(
-                      border: InputBorder.none,
-                      hintText: "~",
-                      hintStyle: TextStyle(color: Colors.blueAccent),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-
-            // BOTTOM BAR
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: Colors.black,
-              child: _mode == InputMode.editorInsert
-                  ? const Text("-- INSERT --",
-                      style: TextStyle(
-                          fontFamily: 'monospace',
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold))
-                  : RawKeyboardListener(
-                      focusNode: FocusNode(),
-                      onKey: _handleCommandKeyEvent,
-                      child: TextField(
-                        controller: _vimCmdController,
-                        focusNode: _vimCmdFocus,
-                        style: const TextStyle(
-                            fontFamily: 'monospace', color: Colors.white),
-                        cursorColor: Colors.white,
-                        decoration: const InputDecoration(
-                          border: InputBorder.none,
-                          isDense: true,
-                          contentPadding: EdgeInsets.zero,
-                        ),
-                        onSubmitted: _handleVimCommand,
-                      ),
-                    ),
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
-}
 
-class ConsoleLine {
-  final String text;
-  final Color color;
-  final bool isBold;
-  ConsoleLine(
-      {required this.text, this.color = Colors.white, this.isBold = false});
+  Widget _buildLogItem(BuildContext context, int index) {
+    final entry = _entries[index];
+    final isLast = index == _entries.length - 1;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: 60,
+            child: Column(
+              children: [
+                Expanded(
+                  flex: 1,
+                  child: Container(
+                    width: 2,
+                    color: index == 0
+                        ? Colors.transparent
+                        : colorScheme.outlineVariant,
+                  ),
+                ),
+                Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: colorScheme.surface,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: colorScheme.primary, width: 2),
+                  ),
+                ),
+                Expanded(
+                  flex: 4,
+                  child: Container(
+                    width: 2,
+                    color: isLast
+                        ? Colors.transparent
+                        : colorScheme.outlineVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 24, right: 16),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainer,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                      color: colorScheme.outlineVariant.withOpacity(0.5)),
+                ),
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          entry['id'].toString().substring(
+                              0, min(7, entry['id'].toString().length)),
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 11,
+                            color: colorScheme.primary,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          _formatDate(entry['date']),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      entry['title'],
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
+                    if (entry['body'] != null &&
+                        entry['body'].toString().isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        entry['body'],
+                        style: TextStyle(
+                            color: colorScheme.onSurfaceVariant,
+                            fontSize: 13,
+                            height: 1.4),
+                      ),
+                    ]
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
