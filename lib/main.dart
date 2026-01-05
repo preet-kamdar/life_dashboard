@@ -149,30 +149,34 @@ class _MainNavigationState extends State<MainNavigation>
   }
 
   BoxDecoration? _getGradient(int index) {
-    if (index == 12)
+    if (index == 12) {
       return const BoxDecoration(
           gradient: LinearGradient(
               colors: [Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight));
-    if (index == 13)
+    }
+    if (index == 13) {
       return const BoxDecoration(
           gradient: LinearGradient(
               colors: [Color(0xFF240b36), Color(0xFFc31432)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight));
-    if (index == 14)
+    }
+    if (index == 14) {
       return const BoxDecoration(
           gradient: LinearGradient(
               colors: [Color(0xFF000000), Color(0xFF0f9b0f)],
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter));
-    if (index == 15)
+    }
+    if (index == 15) {
       return const BoxDecoration(
           gradient: LinearGradient(
               colors: [Color(0xFF000000), Color(0xFF430000)],
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter));
+    }
     return null;
   }
 

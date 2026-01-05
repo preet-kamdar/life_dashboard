@@ -2,10 +2,10 @@ import 'dart:async';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:life_dashboard/database_helper.dart';
-import 'package:life_dashboard/widgets/time_picker_sheet.dart';
 
-// --- ADDED MISSING HELPER FUNCTION ---
+// --- HELPER FUNCTION ---
 String formatDuration(int totalSeconds) {
   int h = totalSeconds ~/ 3600;
   int m = (totalSeconds % 3600) ~/ 60;
@@ -31,7 +31,7 @@ class _MissionScreenState extends State<MissionScreen>
   void initState() {
     super.initState();
     _loadMissions();
-    // Global Ticker: Runs every second to update UI
+    // Global Ticker: Runs every second to update data
     _ticker = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) _tick();
     });
@@ -57,33 +57,22 @@ class _MissionScreenState extends State<MissionScreen>
   void _tick() {
     bool changed = false;
     for (var m in _missions) {
-      // Logic: Only decrement if running and time remains
       if (m['isRunning'] == true && (m['remainingSeconds'] ?? 0) > 0) {
         m['remainingSeconds']--;
-
-        // --- MOMENT OF VICTORY ---
         if (m['remainingSeconds'] <= 0) {
           m['remainingSeconds'] = 0;
           m['isRunning'] = false;
           m['isCompleted'] = true;
-
-          // HARVEST STATS IMMEDIATELY
           int durationMins = (m['totalSeconds'] ?? 0) ~/ 60;
-          if (durationMins < 1) durationMins = 1; // Minimum 1 min credit
-
-          // Fire and forget (save to global stats)
+          if (durationMins < 1) durationMins = 1;
           DatabaseHelper.addFocusMinutes(durationMins);
           DatabaseHelper.incrementMissionsCrushed(1);
-
-          // Optional: Show a snackbar or sound here later
         }
         changed = true;
       }
     }
-
     if (changed) {
       setState(() {});
-      // Auto-save every 5 seconds
       if (DateTime.now().second % 5 == 0) {
         DatabaseHelper.saveMissions(_missions);
       }
@@ -98,7 +87,6 @@ class _MissionScreenState extends State<MissionScreen>
 
       if (!wasRunning) {
         if (isPriority) {
-          // Priority Rule: Pause all others
           for (var m in _missions) {
             m['isRunning'] = false;
           }
@@ -111,7 +99,70 @@ class _MissionScreenState extends State<MissionScreen>
     });
   }
 
-  // --- EDIT DIALOG ---
+  void _showTimeWheelPicker(
+      BuildContext context, int currentSeconds, Function(int) onSet) {
+    Duration initial =
+        Duration(seconds: currentSeconds > 0 ? currentSeconds : 1800);
+    Duration tempDuration = initial;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      builder: (BuildContext builder) {
+        return SizedBox(
+          height: 300,
+          child: Column(
+            children: [
+              Container(
+                color: Colors.white10,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text("SET TIMER PROTOCOL",
+                        style: TextStyle(
+                            color: Colors.white54,
+                            fontFamily: 'monospace',
+                            fontSize: 12)),
+                    TextButton(
+                      onPressed: () {
+                        onSet(tempDuration.inSeconds);
+                        Navigator.pop(context);
+                      },
+                      child: const Text("CONFIRM",
+                          style: TextStyle(
+                              color: Colors.cyanAccent,
+                              fontWeight: FontWeight.bold,
+                              fontFamily: 'monospace')),
+                    )
+                  ],
+                ),
+              ),
+              Expanded(
+                child: CupertinoTheme(
+                  data: const CupertinoThemeData(
+                      brightness: Brightness.dark,
+                      textTheme: CupertinoTextThemeData(
+                          dateTimePickerTextStyle:
+                              TextStyle(color: Colors.white, fontSize: 18))),
+                  child: CupertinoTimerPicker(
+                    mode: CupertinoTimerPickerMode.hms,
+                    initialTimerDuration: initial,
+                    onTimerDurationChanged: (Duration newDuration) {
+                      tempDuration = newDuration;
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // --- DIALOGS ---
   void _showEditMissionDialog(BuildContext context, int index) {
     final mission = _missions[index];
     final TextEditingController titleCtrl =
@@ -125,30 +176,28 @@ class _MissionScreenState extends State<MissionScreen>
       builder: (context) {
         return StatefulBuilder(builder: (context, setStateDialog) {
           return AlertDialog(
-            backgroundColor: colorScheme.surfaceContainerHighest,
+            backgroundColor: const Color(0xFF1E1E1E),
             title: const Text("Edit Protocol",
-                style: TextStyle(fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    fontWeight: FontWeight.bold, color: Colors.white)),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: titleCtrl,
                   autofocus: true,
+                  style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
                     hintText: "Objective Name...",
                     filled: true,
-                    fillColor: Colors.black12,
+                    fillColor: Colors.white.withOpacity(0.05),
                     border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none),
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
                 const SizedBox(height: 20),
                 Wrap(
                   spacing: 10,
-                  runSpacing: 10,
-                  alignment: WrapAlignment.center,
-                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     ActionChip(
                       avatar: Icon(Icons.timer,
@@ -156,12 +205,9 @@ class _MissionScreenState extends State<MissionScreen>
                       label: Text(formatDuration(duration)),
                       backgroundColor: colorScheme.primaryContainer,
                       onPressed: () {
-                        showDialog(
-                          context: context,
-                          builder: (c) => TimePickerSheet(
-                              onTimeSet: (s) =>
-                                  setStateDialog(() => duration = s)),
-                        );
+                        _showTimeWheelPicker(context, duration, (s) {
+                          setStateDialog(() => duration = s);
+                        });
                       },
                     ),
                     FilterChip(
@@ -170,9 +216,7 @@ class _MissionScreenState extends State<MissionScreen>
                       selectedColor: Colors.amber.withOpacity(0.2),
                       checkmarkColor: Colors.amber,
                       labelStyle: TextStyle(
-                          color: isPriority ? Colors.amber : null,
-                          fontWeight:
-                              isPriority ? FontWeight.bold : FontWeight.normal),
+                          color: isPriority ? Colors.amber : Colors.white70),
                       onSelected: (val) =>
                           setStateDialog(() => isPriority = val),
                     ),
@@ -183,7 +227,8 @@ class _MissionScreenState extends State<MissionScreen>
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text("Cancel")),
+                  child: const Text("Cancel",
+                      style: TextStyle(color: Colors.grey))),
               FilledButton(
                 onPressed: () {
                   if (titleCtrl.text.isNotEmpty && duration > 0) {
@@ -195,7 +240,6 @@ class _MissionScreenState extends State<MissionScreen>
                       }
                       _missions[index]['title'] = titleCtrl.text;
                       _missions[index]['isPriority'] = isPriority;
-
                       DatabaseHelper.saveMissions(_missions);
                     });
                     Navigator.pop(context);
@@ -210,7 +254,6 @@ class _MissionScreenState extends State<MissionScreen>
     );
   }
 
-  // --- ADD DIALOG ---
   void _showAddMissionDialog(BuildContext context) {
     final TextEditingController titleCtrl = TextEditingController();
     int duration = 0;
@@ -222,47 +265,44 @@ class _MissionScreenState extends State<MissionScreen>
       builder: (context) {
         return StatefulBuilder(builder: (context, setStateDialog) {
           return AlertDialog(
-            backgroundColor: colorScheme.surfaceContainerHighest,
+            backgroundColor: const Color(0xFF1E1E1E),
             title: const Text("New Objective",
-                style: TextStyle(fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    fontWeight: FontWeight.bold, color: Colors.white)),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: titleCtrl,
                   autofocus: true,
+                  style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
                     hintText: "Objective Name...",
                     filled: true,
-                    fillColor: Colors.black12,
+                    fillColor: Colors.white.withOpacity(0.05),
                     border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none),
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
                 const SizedBox(height: 20),
                 Wrap(
                   spacing: 10,
-                  runSpacing: 10,
-                  alignment: WrapAlignment.center,
-                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     ActionChip(
                       avatar: Icon(Icons.timer,
                           size: 16,
-                          color: duration > 0 ? colorScheme.primary : null),
+                          color:
+                              duration > 0 ? colorScheme.primary : Colors.grey),
                       label: Text(duration > 0
                           ? formatDuration(duration)
                           : "Set Timer"),
-                      backgroundColor:
-                          duration > 0 ? colorScheme.primaryContainer : null,
+                      backgroundColor: duration > 0
+                          ? colorScheme.primaryContainer
+                          : Colors.white10,
                       onPressed: () {
-                        showDialog(
-                          context: context,
-                          builder: (c) => TimePickerSheet(
-                              onTimeSet: (s) =>
-                                  setStateDialog(() => duration = s)),
-                        );
+                        _showTimeWheelPicker(context, duration, (s) {
+                          setStateDialog(() => duration = s);
+                        });
                       },
                     ),
                     FilterChip(
@@ -271,9 +311,7 @@ class _MissionScreenState extends State<MissionScreen>
                       selectedColor: Colors.amber.withOpacity(0.2),
                       checkmarkColor: Colors.amber,
                       labelStyle: TextStyle(
-                          color: isPriority ? Colors.amber : null,
-                          fontWeight:
-                              isPriority ? FontWeight.bold : FontWeight.normal),
+                          color: isPriority ? Colors.amber : Colors.white70),
                       onSelected: (val) =>
                           setStateDialog(() => isPriority = val),
                     ),
@@ -284,7 +322,8 @@ class _MissionScreenState extends State<MissionScreen>
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text("Cancel")),
+                  child: const Text("Cancel",
+                      style: TextStyle(color: Colors.grey))),
               FilledButton(
                 onPressed: () {
                   if (titleCtrl.text.isNotEmpty && duration > 0) {
@@ -346,13 +385,13 @@ class _MissionScreenState extends State<MissionScreen>
               Map<String, dynamic> m = entry.value;
               bool isPriority = m['isPriority'] ?? false;
               bool isRunning = m['isRunning'] ?? false;
-              double orbSize = isPriority ? 200.0 : 150.0;
+              double orbSize = isPriority ? 200.0 : 160.0;
 
               return SizedBox(
                 key: ValueKey(m['id']),
                 width: orbSize,
                 height: orbSize,
-                child: _MissionOrb(
+                child: _ReactiveSphereOrb(
                   title: m['title'] ?? "Mission",
                   totalSeconds: m['totalSeconds'] ?? 1,
                   remainingSeconds: m['remainingSeconds'] ?? 0,
@@ -378,8 +417,7 @@ class _MissionScreenState extends State<MissionScreen>
   }
 }
 
-// --- THE ORB WIDGET ---
-class _MissionOrb extends StatefulWidget {
+class _ReactiveSphereOrb extends StatefulWidget {
   final String title;
   final int totalSeconds;
   final int remainingSeconds;
@@ -391,7 +429,7 @@ class _MissionOrb extends StatefulWidget {
   final VoidCallback onDelete;
   final VoidCallback onEdit;
 
-  const _MissionOrb({
+  const _ReactiveSphereOrb({
     required this.title,
     required this.totalSeconds,
     required this.remainingSeconds,
@@ -405,316 +443,245 @@ class _MissionOrb extends StatefulWidget {
   });
 
   @override
-  State<_MissionOrb> createState() => _MissionOrbState();
+  State<_ReactiveSphereOrb> createState() => _ReactiveSphereOrbState();
 }
 
-class _MissionOrbState extends State<_MissionOrb>
+class _ReactiveSphereOrbState extends State<_ReactiveSphereOrb>
     with TickerProviderStateMixin {
-  late AnimationController _pulseCtrl;
-  late AnimationController _waveCtrl;
-  late AnimationController _morphCtrl;
-  late Animation<double> _morphAnimation;
-  late AnimationController _progressCtrl;
+  double _rotationX = 0.0;
+  double _rotationY = 0.0;
+  double _velocityX = 0.5;
+  double _velocityY = 0.2;
+
+  late AnimationController _physicsCtrl;
+  late AnimationController _squigglyCtrl;
+  List<_SpherePoint> _points = [];
 
   @override
   void initState() {
     super.initState();
-    _pulseCtrl =
-        AnimationController(vsync: this, duration: const Duration(seconds: 2))
-          ..repeat(reverse: true);
-    _waveCtrl =
+    _generateSpherePoints();
+
+    // Physics Engine for Sphere
+    _physicsCtrl =
+        AnimationController(vsync: this, duration: const Duration(seconds: 1))
+          ..repeat();
+    _physicsCtrl.addListener(_updatePhysics);
+
+    // Wave Engine for Border
+    _squigglyCtrl =
         AnimationController(vsync: this, duration: const Duration(seconds: 2))
           ..repeat();
+  }
 
-    _morphCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 350));
-    _morphAnimation =
-        CurvedAnimation(parent: _morphCtrl, curve: Curves.easeOutBack);
-
-    _progressCtrl =
-        AnimationController(vsync: this, duration: const Duration(seconds: 1));
-    _updateProgress(animate: false);
-
-    if (widget.isRunning) {
-      _morphCtrl.value = 1.0;
+  void _generateSpherePoints() {
+    _points.clear();
+    const int numPoints = 80;
+    const double goldenRatio = (1 + 2.2360679775) / 2;
+    for (int i = 0; i < numPoints; i++) {
+      double theta = 2 * math.pi * i / goldenRatio;
+      double phi = math.acos(1 - 2 * (i + 0.5) / numPoints);
+      double x = math.cos(theta) * math.sin(phi);
+      double y = math.sin(theta) * math.sin(phi);
+      double z = math.cos(phi);
+      _points.add(_SpherePoint(x, y, z));
     }
   }
 
-  @override
-  void didUpdateWidget(_MissionOrb oldWidget) {
-    super.didUpdateWidget(oldWidget);
-
-    if (widget.isRunning != oldWidget.isRunning) {
-      if (widget.isRunning) {
-        _morphCtrl.forward();
-      } else {
-        _morphCtrl.animateBack(0.0, curve: Curves.easeIn);
-      }
-    }
-
-    if (widget.remainingSeconds != oldWidget.remainingSeconds ||
-        widget.totalSeconds != oldWidget.totalSeconds) {
-      _updateProgress(animate: widget.isRunning);
-    }
+  void _updatePhysics() {
+    if (!mounted) return;
+    setState(() {
+      _rotationX += _velocityX * 0.02;
+      _rotationY += _velocityY * 0.02;
+      double idleSpeed = widget.isRunning ? 0.05 : 0.01;
+      _velocityX = ui.lerpDouble(_velocityX, idleSpeed, 0.05)!;
+      _velocityY = ui.lerpDouble(_velocityY, idleSpeed, 0.05)!;
+    });
   }
 
-  void _updateProgress({required bool animate}) {
-    double target = widget.totalSeconds > 0
-        ? widget.remainingSeconds / widget.totalSeconds
-        : 0.0;
-    target = target.clamp(0.0, 1.0);
-
-    if (animate) {
-      _progressCtrl.animateTo(target,
-          duration: const Duration(seconds: 1), curve: Curves.linear);
-    } else {
-      _progressCtrl.value = target;
-    }
+  void _onPanUpdate(DragUpdateDetails details) {
+    setState(() {
+      _velocityX += details.delta.dy * 0.01;
+      _velocityY -= details.delta.dx * 0.01;
+    });
   }
 
   @override
   void dispose() {
-    _pulseCtrl.dispose();
-    _waveCtrl.dispose();
-    _morphCtrl.dispose();
-    _progressCtrl.dispose();
+    _physicsCtrl.dispose();
+    _squigglyCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = widget.colorScheme;
+    Color baseColor =
+        widget.isPriority ? Colors.amber : widget.colorScheme.primary;
+    if (widget.isCompleted) baseColor = Colors.greenAccent;
 
-    Color headColor = widget.isPriority ? Colors.amber : colorScheme.primary;
-    Color tailColor =
-        widget.isPriority ? Colors.amber.shade200 : colorScheme.secondary;
-    if (widget.isCompleted) {
-      headColor = Colors.green;
-      tailColor = Colors.green.shade200;
-    }
+    // TARGET VALUES
+    double targetProgress = widget.totalSeconds > 0
+        ? widget.remainingSeconds / widget.totalSeconds
+        : 0.0;
+
+    // Logic: If paused, target is full circle (1.0) or current progress?
+    // User requested "Static when not activated".
+    // We will keep the arc at current progress but FREEZE the amplitude.
 
     return GestureDetector(
       onTap: widget.onTap,
-      // RIGHT CLICK (Desktop)
-      onSecondaryTapUp: (d) {
-        showMenu(
-            context: context,
-            position: RelativeRect.fromLTRB(
-                d.globalPosition.dx, d.globalPosition.dy, 0, 0),
-            items: [
-              const PopupMenuItem(
-                  value: 'edit',
-                  child: ListTile(
-                    leading: Icon(Icons.edit, size: 20),
-                    title: Text("Edit Protocol"),
-                    contentPadding: EdgeInsets.zero,
-                  )),
-              const PopupMenuItem(
-                  value: 'del',
-                  child: ListTile(
-                    leading:
-                        Icon(Icons.delete, color: Colors.redAccent, size: 20),
-                    title: Text("Abort Mission",
-                        style: TextStyle(color: Colors.redAccent)),
-                    contentPadding: EdgeInsets.zero,
-                  )),
-            ]).then((v) {
-          if (v == 'del') widget.onDelete();
-          if (v == 'edit') widget.onEdit();
-        });
-      },
-      // LONG PRESS (Mobile)
-      onLongPress: () {
-        showMenu(
-            context: context,
-            position: const RelativeRect.fromLTRB(
-                100, 100, 100, 100), // Simple center positioning fallback
-            items: [
-              const PopupMenuItem(value: 'edit', child: Text("Edit Protocol")),
-              const PopupMenuItem(
-                  value: 'del',
-                  child: Text("Abort Mission",
-                      style: TextStyle(color: Colors.redAccent))),
-            ]).then((v) {
-          if (v == 'del') widget.onDelete();
-          if (v == 'edit') widget.onEdit();
-        });
-      },
-      child: AnimatedBuilder(
-        animation: Listenable.merge(
-            [_pulseCtrl, _waveCtrl, _morphCtrl, _progressCtrl]),
-        builder: (context, child) {
-          double rawMorph = _morphAnimation.value;
-          double clampedMorph = rawMorph.clamp(0.0, 1.0);
+      onPanUpdate: _onPanUpdate,
+      onLongPress: widget.onEdit,
+      onSecondaryTapUp: (d) => widget.onDelete(),
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(
+            colors: [baseColor.withOpacity(0.1), Colors.black.withOpacity(0.8)],
+            center: const Alignment(-0.3, -0.3),
+            radius: 0.8,
+          ),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // 1. REACTIVE SQUIGGLY BORDER
+            // Uses TweenAnimationBuilder to smoothly interpolate the countdown (No 1-sec skipping)
+            TweenAnimationBuilder<double>(
+              tween: Tween<double>(begin: targetProgress, end: targetProgress),
+              duration:
+                  const Duration(seconds: 1), // Interpolates the 1-second drop
+              curve: Curves.linear,
+              builder: (context, smoothProgress, child) {
+                // Also Animate Amplitude: 0.0 (Static) -> 4.0 (Active)
+                return TweenAnimationBuilder<double>(
+                    tween: Tween<double>(
+                        begin: 0.0, end: widget.isRunning ? 4.0 : 0.0),
+                    duration: const Duration(milliseconds: 500),
+                    curve: Curves.easeOutBack,
+                    builder: (context, smoothAmplitude, _) {
+                      return AnimatedBuilder(
+                          animation: _squigglyCtrl,
+                          builder: (context, child) {
+                            return CustomPaint(
+                              size: Size.infinite,
+                              painter: _SquigglyRingPainter(
+                                color: baseColor
+                                    .withOpacity(widget.isRunning ? 1.0 : 0.3),
+                                phase: _squigglyCtrl.value * 4 * math.pi,
+                                amplitude:
+                                    smoothAmplitude, // Controlled by state
+                                progress:
+                                    smoothProgress, // Controlled by smooth tween
+                              ),
+                            );
+                          });
+                    });
+              },
+            ),
 
-          double targetAmp = widget.isPriority ? 6.0 : 4.0;
-          double currentAmp = ui.lerpDouble(0.0, targetAmp, rawMorph)!;
-
-          double targetStroke = widget.isPriority ? 4.0 : 3.0;
-          double currentStroke = ui.lerpDouble(6.0, targetStroke, rawMorph)!;
-
-          double scale = 1.0 + (_pulseCtrl.value * 0.03 * rawMorph);
-          // Only animate phase if running
-          double wavePhase =
-              widget.isRunning ? _waveCtrl.value * 2 * math.pi : 0;
-          double smoothProgress = _progressCtrl.value;
-
-          return Transform.scale(
-            scale: scale,
-            child: Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: colorScheme.surfaceContainerHighest,
-                border: Border.all(
-                  color: colorScheme.outline.withOpacity(0.3),
-                  width: 1,
-                ),
-                boxShadow: widget.isPriority
-                    ? [
-                        const BoxShadow(
-                            color: Colors.black12,
-                            blurRadius: 5,
-                            offset: Offset(0, 2))
-                      ]
-                    : [],
-              ),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  // RENDERER
-                  SizedBox(
-                    width: double.infinity,
-                    height: double.infinity,
-                    child: CustomPaint(
-                      painter: _MaterialExpressivePainter(
-                        headColor: headColor,
-                        tailColor: tailColor,
-                        trackColor: colorScheme.outline.withOpacity(0.15),
-                        progress: smoothProgress,
-                        wavePhase: wavePhase,
-                        amplitude: currentAmp,
-                        strokeWidth: currentStroke,
-                        frequency: widget.isPriority ? 24 : 16,
-                        morphValue: clampedMorph,
-                      ),
-                    ),
-                  ),
-
-                  // TEXT CONTENT
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 14.0),
-                        child: Text(
-                          widget.title.toUpperCase(),
-                          textAlign: TextAlign.center,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: widget.isPriority ? 18 : 14,
-                            color: widget.isCompleted
-                                ? colorScheme.onSurfaceVariant.withOpacity(0.5)
-                                : colorScheme.onSurface,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        widget.isCompleted
-                            ? "COMPLETE"
-                            : formatDuration(widget.remainingSeconds),
-                        style: TextStyle(
-                          fontFamily: 'Courier',
-                          fontSize: widget.isPriority ? 14 : 12,
-                          color: headColor,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+            // 2. 3D SPHERE
+            CustomPaint(
+              size: Size.infinite,
+              painter: _TechSpherePainter(
+                points: _points,
+                rotationX: _rotationX,
+                rotationY: _rotationY,
+                color: baseColor,
+                isRunning: widget.isRunning,
               ),
             ),
-          );
-        },
+
+            // 3. TEXT INFO
+            Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Text(
+                    widget.title.toUpperCase(),
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: widget.isPriority ? 16 : 13,
+                        color: Colors.white,
+                        shadows: [Shadow(color: Colors.black, blurRadius: 4)]),
+                  ),
+                ),
+                Text(
+                  widget.isCompleted
+                      ? "DONE"
+                      : formatDuration(widget.remainingSeconds),
+                  style: TextStyle(
+                      fontFamily: 'Courier',
+                      fontSize: 12,
+                      color: baseColor,
+                      fontWeight: FontWeight.bold,
+                      shadows: [
+                        const Shadow(color: Colors.black, blurRadius: 2)
+                      ]),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-class _MaterialExpressivePainter extends CustomPainter {
-  final Color headColor;
-  final Color tailColor;
-  final Color trackColor;
-  final double progress;
-  final double wavePhase;
-  final double amplitude;
-  final double strokeWidth;
-  final int frequency;
-  final double morphValue;
+// --- PAINTERS ---
 
-  _MaterialExpressivePainter({
-    required this.headColor,
-    required this.tailColor,
-    required this.trackColor,
-    required this.progress,
-    required this.wavePhase,
+class _SquigglyRingPainter extends CustomPainter {
+  final Color color;
+  final double phase;
+  final double amplitude;
+  final double progress;
+
+  _SquigglyRingPainter({
+    required this.color,
+    required this.phase,
     required this.amplitude,
-    required this.strokeWidth,
-    required this.frequency,
-    required this.morphValue,
+    required this.progress,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 1. BACKGROUND TRACK
-    final Paint trackPaint = Paint()
-      ..color = trackColor
-      ..strokeWidth = strokeWidth
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
-    final double radius = (size.width / 2) - 12;
-    final Offset center = Offset(size.width / 2, size.height / 2);
-
-    canvas.drawCircle(center, radius, trackPaint);
-
-    if (progress <= 0) return;
-
-    // 2. MAIN PAINT
-    final Rect rect = Rect.fromCircle(center: center, radius: radius);
-    final Gradient gradient = SweepGradient(
-      startAngle: -math.pi / 2,
-      endAngle: (2 * math.pi) - (math.pi / 2),
-      tileMode: TileMode.repeated,
-      colors: [
-        tailColor,
-        headColor,
-      ],
-      stops: const [0.0, 1.0],
-    );
+    // If progress is near zero, don't draw
+    if (progress <= 0.01) return;
 
     final Paint paint = Paint()
-      ..shader = gradient.createShader(rect)
-      ..strokeWidth = strokeWidth
+      ..color = color
       ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5
       ..strokeCap = StrokeCap.round;
 
     final Path path = Path();
-    int totalPoints = 720;
-    int drawPoints = (totalPoints * progress).toInt();
+    final Offset center = Offset(size.width / 2, size.height / 2);
+    final double radius = (size.width / 2) - 4;
 
-    for (int i = 0; i <= drawPoints; i++) {
-      double angle = (i / totalPoints) * 2 * math.pi - (math.pi / 2);
+    // Draw only the remaining arc
+    final double totalAngle = 2 * math.pi * progress;
+    // Map progress to steps, ensuring we have enough resolution for the wiggle
+    final int steps = (180 * progress).toInt().clamp(2, 360);
 
-      double waveOffset = amplitude *
-          math.sin((frequency * (i / totalPoints) * 2 * math.pi) + wavePhase);
-      double currentRadius = radius + waveOffset;
+    // Start from top (-PI/2)
+    final double startAngle = -math.pi / 2;
 
-      double x = center.dx + currentRadius * math.cos(angle);
-      double y = center.dy + currentRadius * math.sin(angle);
+    for (int i = 0; i <= steps; i++) {
+      double percent = i / steps;
+      double currentAngle = startAngle + (percent * totalAngle);
+
+      // SQUIGGLE MATH:
+      // If amplitude is 0 (Static), this resolves to a perfect circle.
+      double wobble = math.sin(currentAngle * 18 + phase) * amplitude +
+          math.cos(currentAngle * 9 - phase * 1.5) * (amplitude * 0.5);
+
+      double r = radius + wobble;
+      double x = center.dx + r * math.cos(currentAngle);
+      double y = center.dy + r * math.sin(currentAngle);
 
       if (i == 0) {
         path.moveTo(x, y);
@@ -725,31 +692,79 @@ class _MaterialExpressivePainter extends CustomPainter {
 
     canvas.drawPath(path, paint);
 
-    // 3. TIP DOT
-    if (drawPoints > 0 && morphValue > 0.1) {
-      double endAngle =
-          (drawPoints / totalPoints) * 2 * math.pi - (math.pi / 2);
-      double endWaveOffset = amplitude *
-          math.sin((frequency * (drawPoints / totalPoints) * 2 * math.pi) +
-              wavePhase);
-      double endRadius = radius + endWaveOffset;
+    // Spark at the tip (only if active)
+    if (progress < 0.99 && amplitude > 1.0) {
+      double endAngle = startAngle + totalAngle;
+      double wobble = math.sin(endAngle * 18 + phase) * amplitude +
+          math.cos(endAngle * 9 - phase * 1.5) * (amplitude * 0.5);
+      double r = radius + wobble;
+      double endX = center.dx + r * math.cos(endAngle);
+      double endY = center.dy + r * math.sin(endAngle);
 
-      double tipX = center.dx + endRadius * math.cos(endAngle);
-      double tipY = center.dy + endRadius * math.sin(endAngle);
-
+      canvas.drawCircle(Offset(endX, endY), 4.0, Paint()..color = Colors.white);
       canvas.drawCircle(
-          Offset(tipX, tipY), strokeWidth * 1.5, Paint()..color = headColor);
-      canvas.drawCircle(
-          Offset(tipX, tipY), strokeWidth * 0.7, Paint()..color = Colors.white);
+          Offset(endX, endY), 8.0, Paint()..color = color.withOpacity(0.4));
     }
   }
 
   @override
-  bool shouldRepaint(covariant _MaterialExpressivePainter oldDelegate) {
-    return oldDelegate.progress != progress ||
-        oldDelegate.wavePhase != wavePhase ||
-        oldDelegate.amplitude != amplitude ||
-        oldDelegate.strokeWidth != strokeWidth ||
-        oldDelegate.headColor != headColor;
+  bool shouldRepaint(covariant _SquigglyRingPainter old) =>
+      old.phase != phase ||
+      old.color != color ||
+      old.progress != progress ||
+      old.amplitude != amplitude;
+}
+
+class _SpherePoint {
+  double x, y, z;
+  _SpherePoint(this.x, this.y, this.z);
+}
+
+class _TechSpherePainter extends CustomPainter {
+  final List<_SpherePoint> points;
+  final double rotationX;
+  final double rotationY;
+  final Color color;
+  final bool isRunning;
+
+  _TechSpherePainter({
+    required this.points,
+    required this.rotationX,
+    required this.rotationY,
+    required this.color,
+    required this.isRunning,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double cx = size.width / 2;
+    final double cy = size.height / 2;
+    final double radius = (size.width / 2) - 14;
+
+    final Paint paint = Paint()
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.fill;
+
+    for (var point in points) {
+      double x1 = point.x * math.cos(rotationY) - point.z * math.sin(rotationY);
+      double z1 = point.x * math.sin(rotationY) + point.z * math.cos(rotationY);
+      double y2 = point.y * math.cos(rotationX) - z1 * math.sin(rotationX);
+      double z2 = point.y * math.sin(rotationX) + z1 * math.cos(rotationX);
+      double x2 = x1;
+
+      if (z2 < -0.5) continue;
+
+      double depth = (z2 + 2) / 3;
+      double px = cx + x2 * radius;
+      double py = cy + y2 * radius;
+
+      paint.color =
+          color.withOpacity(depth.clamp(0.2, 1.0) * (isRunning ? 1.0 : 0.6));
+      double dotSize = isRunning ? 2.5 : 1.8;
+      canvas.drawCircle(Offset(px, py), dotSize * depth, paint);
+    }
   }
+
+  @override
+  bool shouldRepaint(covariant _TechSpherePainter old) => true;
 }
