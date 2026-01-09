@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:life_dashboard/database_helper.dart';
 import 'package:intl/intl.dart';
@@ -13,9 +14,8 @@ class JournalScreen extends StatefulWidget {
 class _JournalScreenState extends State<JournalScreen> {
   // Store entries grouped by "Month Year" (e.g., "January 2026")
   Map<String, List<Map<String, dynamic>>> _groupedEntries = {};
-  List<String> _sortedKeys = []; // To keep months in order
+  List<String> _sortedKeys = [];
 
-  // Track expanded Months and expanded individual Entries
   final Set<String> _expandedMonths = {};
   final Set<String> _expandedEntryIds = {};
 
@@ -36,7 +36,7 @@ class _JournalScreenState extends State<JournalScreen> {
     Map<String, List<Map<String, dynamic>>> groups = {};
     for (var entry in rawData) {
       DateTime dt = DateTime.tryParse(entry['date']) ?? DateTime.now();
-      String key = DateFormat('MMMM yyyy').format(dt); // e.g., "January 2026"
+      String key = DateFormat('MMMM yyyy').format(dt);
 
       if (!groups.containsKey(key)) {
         groups[key] = [];
@@ -49,7 +49,7 @@ class _JournalScreenState extends State<JournalScreen> {
     sortedKeys.sort((a, b) {
       DateTime dateA = DateFormat('MMMM yyyy').parse(a);
       DateTime dateB = DateFormat('MMMM yyyy').parse(b);
-      return dateB.compareTo(dateA); // Descending
+      return dateB.compareTo(dateA);
     });
 
     // 3. Set Default Expansion (Expand only the newest month)
@@ -95,7 +95,6 @@ class _JournalScreenState extends State<JournalScreen> {
           break;
         case 'log':
           setState(() => _expandedEntryIds.clear());
-          // Expand all months on log command to see everything
           setState(() => _expandedMonths.addAll(_sortedKeys));
           _showFeedback("Expanded all history");
           break;
@@ -111,11 +110,14 @@ class _JournalScreenState extends State<JournalScreen> {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? Theme.of(context).colorScheme.error : null,
+        content: Text(message, style: const TextStyle(fontFamily: 'monospace')),
+        backgroundColor: isError
+            ? Theme.of(context).colorScheme.error
+            : Theme.of(context).colorScheme.surfaceContainerHighest,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        margin: const EdgeInsets.all(16),
+        showCloseIcon: true,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 100), // Above FAB/Input
       ),
     );
   }
@@ -123,50 +125,61 @@ class _JournalScreenState extends State<JournalScreen> {
   void _openModernEditor() {
     final titleCtrl = TextEditingController();
     final bodyCtrl = TextEditingController();
+    final colorScheme = Theme.of(context).colorScheme;
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
+      backgroundColor: colorScheme.surface,
       builder: (ctx) => Padding(
         padding: EdgeInsets.only(
             bottom: MediaQuery.of(ctx).viewInsets.bottom,
-            left: 20,
-            right: 20,
-            top: 20),
+            left: 24,
+            right: 24,
+            top: 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text("New Commit",
-                style: Theme.of(context)
-                    .textTheme
-                    .headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 20),
+            Row(
+              children: [
+                Icon(Icons.edit_note, color: colorScheme.primary),
+                const SizedBox(width: 12),
+                Text("NEW COMMIT",
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold, letterSpacing: 1)),
+              ],
+            ),
+            const SizedBox(height: 24),
             TextField(
               controller: titleCtrl,
               autofocus: true,
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-              decoration: const InputDecoration(
-                hintText: "Title",
+              decoration: InputDecoration(
+                hintText: "Title / Summary",
                 border: InputBorder.none,
+                hintStyle:
+                    TextStyle(color: colorScheme.outline.withOpacity(0.5)),
               ),
             ),
-            const Divider(),
+            Divider(color: colorScheme.outlineVariant),
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 200),
               child: TextField(
                 controller: bodyCtrl,
                 maxLines: null,
-                decoration: const InputDecoration(
-                  hintText: "Description...",
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
+                decoration: InputDecoration(
+                  hintText: "Description (optional)...",
                   border: InputBorder.none,
+                  hintStyle: TextStyle(
+                      color: colorScheme.outline.withOpacity(0.5),
+                      fontFamily: 'monospace'),
                 ),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 16),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
@@ -180,12 +193,12 @@ class _JournalScreenState extends State<JournalScreen> {
                       Navigator.pop(ctx);
                     }
                   },
-                  icon: const Icon(Icons.check),
-                  label: const Text("Commit"),
+                  icon: const Icon(Icons.check, size: 18),
+                  label: const Text("Push Commit"),
                 ),
               ],
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
           ],
         ),
       ),
@@ -215,7 +228,6 @@ class _JournalScreenState extends State<JournalScreen> {
   }
 
   Future<void> _deleteEntry(String partialHash) async {
-    // Search across all groups
     String? fullId;
     for (var list in _groupedEntries.values) {
       for (var entry in list) {
@@ -243,7 +255,7 @@ class _JournalScreenState extends State<JournalScreen> {
   String _formatDay(String iso) {
     try {
       final dt = DateTime.parse(iso);
-      return DateFormat('dd').format(dt); // Just the Day Number (e.g. "04")
+      return DateFormat('dd').format(dt);
     } catch (e) {
       return "?";
     }
@@ -271,144 +283,166 @@ class _JournalScreenState extends State<JournalScreen> {
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      body: Column(
+      body: Stack(
         children: [
-          Expanded(
-            child: CustomScrollView(
-              controller: _scrollController,
-              slivers: [
-                const SliverAppBar.large(
-                  title: Text("Journal Log"),
-                  centerTitle: false,
-                ),
+          CustomScrollView(
+            controller: _scrollController,
+            slivers: [
+              SliverAppBar.large(
+                title: Text("SYSTEM LOG",
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 3)),
+                centerTitle: false,
+              ),
 
-                if (_sortedKeys.isEmpty)
-                  SliverFillRemaining(
-                    child: Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.history_edu,
-                              size: 64,
-                              color: colorScheme.outline.withOpacity(0.5)),
-                          const SizedBox(height: 16),
-                          Text("No entries yet",
-                              style: TextStyle(color: colorScheme.outline)),
-                        ],
-                      ),
-                    ),
-                  )
-                else
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        final monthKey = _sortedKeys[index];
-                        final entries = _groupedEntries[monthKey] ?? [];
-                        final isMonthExpanded =
-                            _expandedMonths.contains(monthKey);
-
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // 1. MONTH HEADER (Sticky-like feel)
-                            InkWell(
-                              onTap: () {
-                                setState(() {
-                                  if (isMonthExpanded) {
-                                    _expandedMonths.remove(monthKey);
-                                  } else {
-                                    _expandedMonths.add(monthKey);
-                                  }
-                                });
-                              },
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 24, vertical: 16),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      isMonthExpanded
-                                          ? Icons.keyboard_arrow_down
-                                          : Icons.keyboard_arrow_right,
-                                      color: colorScheme.primary,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      monthKey.toUpperCase(),
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.bold,
-                                        letterSpacing: 1.5,
-                                        color: colorScheme.primary,
-                                      ),
-                                    ),
-                                    const Spacer(),
-                                    Text(
-                                      "${entries.length} commits",
-                                      style: TextStyle(
-                                          color: colorScheme.outline,
-                                          fontSize: 12),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-
-                            // 2. ENTRIES LIST (Only if expanded)
-                            if (isMonthExpanded)
-                              ListView.builder(
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                itemCount: entries.length,
-                                itemBuilder: (ctx, i) => _buildEntryRow(context,
-                                    entries[i], i == entries.length - 1),
-                              ),
-                          ],
-                        );
-                      },
-                      childCount: _sortedKeys.length,
+              if (_sortedKeys.isEmpty)
+                SliverFillRemaining(
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.terminal,
+                            size: 64,
+                            color: colorScheme.outline.withOpacity(0.5)),
+                        const SizedBox(height: 16),
+                        Text("No commits found",
+                            style: TextStyle(
+                                color: colorScheme.outline,
+                                fontFamily: 'monospace')),
+                      ],
                     ),
                   ),
+                )
+              else
+                SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final monthKey = _sortedKeys[index];
+                      final entries = _groupedEntries[monthKey] ?? [];
+                      final isMonthExpanded =
+                          _expandedMonths.contains(monthKey);
 
-                // Bottom Padding for FAB/Pill
-                const SliverToBoxAdapter(child: SizedBox(height: 100)),
-              ],
-            ),
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 1. MONTH HEADER
+                          InkWell(
+                            onTap: () {
+                              setState(() {
+                                if (isMonthExpanded) {
+                                  _expandedMonths.remove(monthKey);
+                                } else {
+                                  _expandedMonths.add(monthKey);
+                                }
+                              });
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 24, vertical: 20),
+                              child: Row(
+                                children: [
+                                  AnimatedRotation(
+                                    turns: isMonthExpanded ? 0.25 : 0,
+                                    duration: const Duration(milliseconds: 200),
+                                    child: Icon(Icons.arrow_forward_ios_rounded,
+                                        size: 14, color: colorScheme.primary),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Text(
+                                    monthKey.toUpperCase(),
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 1.5,
+                                      color: colorScheme.primary,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 2),
+                                    decoration: BoxDecoration(
+                                        color:
+                                            colorScheme.surfaceContainerHighest,
+                                        borderRadius:
+                                            BorderRadius.circular(12)),
+                                    child: Text(
+                                      "${entries.length} changes",
+                                      style: TextStyle(
+                                          color: colorScheme.onSurfaceVariant,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+
+                          // 2. ENTRIES LIST
+                          if (isMonthExpanded)
+                            ListView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: entries.length,
+                              itemBuilder: (ctx, i) => _buildEntryRow(
+                                  context, entries[i], i == entries.length - 1),
+                            ),
+                        ],
+                      );
+                    },
+                    childCount: _sortedKeys.length,
+                  ),
+                ),
+
+              // Bottom Padding for Command Bar
+              const SliverToBoxAdapter(child: SizedBox(height: 120)),
+            ],
           ),
 
-          // COMMAND PILL
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: colorScheme.surface, boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 10,
-                offset: const Offset(0, -5),
-              )
-            ]),
-            child: SafeArea(
-              child: TextField(
-                controller: _cmdController,
-                style: TextStyle(color: colorScheme.onSurface),
-                decoration: InputDecoration(
-                    hintText: "Type 'commit'...",
-                    hintStyle: TextStyle(color: colorScheme.outline),
-                    filled: true,
-                    fillColor:
-                        colorScheme.surfaceContainerHighest.withOpacity(0.5),
-                    prefixIcon: Icon(Icons.terminal_rounded,
-                        color: colorScheme.primary),
-                    border: OutlineInputBorder(
+          // COMMAND LINE INPUT (Floating Glass)
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 16,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(30),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainer.withOpacity(0.8),
                       borderRadius: BorderRadius.circular(30),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 16),
-                    suffixIcon: IconButton(
-                      icon: const Icon(Icons.arrow_upward_rounded),
-                      onPressed: () => _handleCommand(_cmdController.text),
-                    )),
-                onSubmitted: _handleCommand,
+                      border: Border.all(
+                          color: colorScheme.outlineVariant.withOpacity(0.5))),
+                  child: TextField(
+                    controller: _cmdController,
+                    style: TextStyle(
+                        color: colorScheme.onSurface, fontFamily: 'monospace'),
+                    decoration: InputDecoration(
+                        hintText: "git commit -m \"Message\"...",
+                        hintStyle: TextStyle(
+                            color: colorScheme.outline.withOpacity(0.7),
+                            fontFamily: 'monospace',
+                            fontSize: 12),
+                        filled: false,
+                        prefixIcon:
+                            Icon(Icons.terminal, color: colorScheme.primary),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 14),
+                        suffixIcon: IconButton(
+                          icon: Icon(Icons.arrow_upward_rounded,
+                              color: colorScheme.tertiary),
+                          onPressed: () => _handleCommand(_cmdController.text),
+                        )),
+                    onSubmitted: _handleCommand,
+                  ),
+                ),
               ),
             ),
           ),
@@ -425,26 +459,20 @@ class _JournalScreenState extends State<JournalScreen> {
     final shortHash = id.toString().substring(0, min(7, id.toString().length));
 
     return Dismissible(
-      // 1. UNIQUE KEY (Required for swipe)
       key: Key(id),
-      direction: DismissDirection.endToStart, // Only swipe right-to-left
-
-      // 2. THE RED BACKGROUND (Visual feedback)
+      direction: DismissDirection.endToStart,
       background: Container(
         alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
+        padding: const EdgeInsets.only(right: 24),
         color: colorScheme.errorContainer,
         child: Icon(Icons.delete_outline, color: colorScheme.onErrorContainer),
       ),
-
-      // 3. CONFIRMATION DIALOG (Safety check)
       confirmDismiss: (direction) async {
         return await showDialog(
           context: context,
           builder: (ctx) => AlertDialog(
             title: const Text("Delete Commit?"),
-            content: Text(
-                "Are you sure you want to delete '$shortHash'? This cannot be undone."),
+            content: Text("Are you sure you want to delete '$shortHash'?"),
             actions: [
               TextButton(
                   onPressed: () => Navigator.of(ctx).pop(false),
@@ -459,58 +487,72 @@ class _JournalScreenState extends State<JournalScreen> {
           ),
         );
       },
-
-      // 4. ACTUAL DELETION LOGIC
-      onDismissed: (direction) {
-        // optimistically remove from UI logic is handled by parent rebuilding,
-        // but we need to trigger the database delete
-        _deleteEntry(id);
-      },
-
+      onDismissed: (_) => _deleteEntry(id),
       child: IntrinsicHeight(
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // A. DATE COLUMN (Left)
+            // A. DATE COLUMN
             SizedBox(
               width: 70,
               child: Column(
                 children: [
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   Text(
                     _formatDay(entry['date']),
                     style: TextStyle(
-                        fontSize: 18,
+                        fontSize: 16,
                         fontWeight: FontWeight.bold,
+                        fontFamily: 'monospace',
                         color: colorScheme.onSurface),
                   ),
                   Text(
                     _formatTime(entry['date']),
-                    style: TextStyle(fontSize: 11, color: colorScheme.outline),
+                    style: TextStyle(
+                        fontSize: 10,
+                        color: colorScheme.outline,
+                        fontFamily: 'monospace'),
                   ),
                 ],
               ),
             ),
 
-            // B. TIMELINE LINE (Middle)
+            // B. TIMELINE LINE
             SizedBox(
               width: 20,
-              child: Column(
+              child: Stack(
+                alignment: Alignment.center,
                 children: [
-                  Expanded(
+                  // The Line
+                  Positioned(
+                    top: 0,
+                    bottom: 0,
                     child: Container(
                       width: 2,
                       color: colorScheme.outlineVariant.withOpacity(0.5),
                     ),
                   ),
+                  // The Dot (Git Node)
+                  Positioned(
+                    top: 18,
+                    child: Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                          color: colorScheme.surface,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: colorScheme.tertiary, width: 2)),
+                    ),
+                  )
                 ],
               ),
             ),
 
-            // C. CARD CONTENT (Right)
+            // C. CARD CONTENT
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.only(bottom: 16, right: 16, left: 8),
+                padding: const EdgeInsets.only(bottom: 16, right: 16, left: 12),
                 child: InkWell(
                   onTap: () {
                     setState(() {
@@ -522,42 +564,37 @@ class _JournalScreenState extends State<JournalScreen> {
                     });
                   },
                   borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                         color: isExpanded
                             ? colorScheme.surfaceContainer
-                            : colorScheme.surface,
+                            : Colors
+                                .transparent, // Transparent when collapsed for cleaner look
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                            color: isExpanded
-                                ? colorScheme.outlineVariant
-                                : Colors.transparent)),
+                        border: isExpanded
+                            ? Border.all(color: colorScheme.outlineVariant)
+                            : null),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: colorScheme.primary.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(shortHash,
-                                  style: TextStyle(
-                                      fontFamily: 'monospace',
-                                      fontSize: 10,
-                                      color: colorScheme.primary,
-                                      fontWeight: FontWeight.bold)),
-                            ),
-                            const SizedBox(width: 8),
+                            Text(shortHash,
+                                style: TextStyle(
+                                    fontFamily: 'monospace',
+                                    fontSize: 12,
+                                    color: colorScheme.tertiary,
+                                    fontWeight: FontWeight.bold)),
+                            const SizedBox(width: 12),
                             Expanded(
                               child: Text(
                                 entry['title'],
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w600, fontSize: 15),
+                                style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 15,
+                                    color: colorScheme.onSurface),
                                 maxLines: isExpanded ? null : 1,
                                 overflow:
                                     isExpanded ? null : TextOverflow.ellipsis,
@@ -568,13 +605,22 @@ class _JournalScreenState extends State<JournalScreen> {
                         if (isExpanded &&
                             entry['body'] != null &&
                             entry['body'].toString().isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            entry['body'],
-                            style: TextStyle(
-                                color: colorScheme.onSurfaceVariant,
-                                height: 1.5,
-                                fontSize: 14),
+                          const SizedBox(height: 12),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                                color: colorScheme.surfaceContainerHighest
+                                    .withOpacity(0.5),
+                                borderRadius: BorderRadius.circular(8)),
+                            child: Text(
+                              entry['body'],
+                              style: TextStyle(
+                                  color: colorScheme.onSurfaceVariant,
+                                  height: 1.5,
+                                  fontSize: 13,
+                                  fontFamily: 'monospace'),
+                            ),
                           ),
                         ]
                       ],

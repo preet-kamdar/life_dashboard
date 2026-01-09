@@ -10,7 +10,6 @@ class StatsScreen extends StatefulWidget {
 }
 
 class _StatsScreenState extends State<StatsScreen> {
-  // Stats Data
   Map<DateTime, int> _heatMapDataSet = {};
   int _totalFocusMinutes = 0;
   int _totalCommits = 0;
@@ -23,29 +22,23 @@ class _StatsScreenState extends State<StatsScreen> {
   }
 
   void _loadStats() {
-    // 1. Get Focus Minutes
     final minutes = DatabaseHelper.getTotalFocusMinutes();
-
-    // 2. Get Journal Commits for Heatmap
     final journal = DatabaseHelper.loadJournal();
+
+    // BUILD HEATMAP
     Map<DateTime, int> heatMap = {};
-
     for (var entry in journal) {
-      // Parse "2024-10-21 14:30" -> DateTime
       try {
-        String dateStr = entry['date'].split(' ')[0]; // Just the YYYY-MM-DD
+        String dateStr = entry['date'].split(' ')[0];
         DateTime date = DateTime.parse(dateStr);
-
-        // Increment count for this date
         heatMap[date] = (heatMap[date] ?? 0) + 1;
       } catch (e) {
-        // Ignore parsing errors
+        // Ignore
       }
     }
 
-    // 3. Calculate Rank
-    // Logic: Every 60 minutes = 1 Level? Or based on commits?
-    // Let's do: Total "Activity" Points.
+    // CALCULATE RANK
+    // Simple Gamification Formula
     int score = minutes + (journal.length * 10);
     String rank;
     if (score < 100) {
@@ -69,55 +62,63 @@ class _StatsScreenState extends State<StatsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Scaffold(
-      backgroundColor: Colors.black,
+      // Dynamic Background (Matches Wallpaper/Theme)
+      backgroundColor: colorScheme.surface,
       appBar: AppBar(
-        title: const Text("SYSTEM MONITOR",
-            style: TextStyle(letterSpacing: 2, fontFamily: 'monospace')),
-        backgroundColor: Colors.transparent,
+        title: Text("SYSTEM MONITOR",
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                fontFamily: 'monospace',
+                fontWeight: FontWeight.bold,
+                letterSpacing: 2)),
         centerTitle: true,
+        backgroundColor: Colors.transparent,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.fromLTRB(20, 10, 20, 100),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // --- HEADER CARD (RANK) ---
-            _buildRankCard(),
+            _buildRankCard(context),
             const SizedBox(height: 30),
 
             // --- THE HEATMAP (GIT GRAPH) ---
-            const Text("ACTIVITY LOG (CONTRIBUTIONS)",
+            Text("ACTIVITY LOG",
                 style: TextStyle(
-                    color: Colors.grey, fontSize: 12, fontFamily: 'monospace')),
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                    fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             Container(
-              padding: const EdgeInsets.all(10),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: const Color(0xFF111111),
-                border: Border.all(color: Colors.white10),
-                borderRadius: BorderRadius.circular(10),
+                color: colorScheme.surfaceContainer, // M3 Container Color
+                borderRadius: BorderRadius.circular(24),
               ),
               child: HeatMap(
                 datasets: _heatMapDataSet,
                 colorMode: ColorMode.opacity,
                 showText: false,
                 scrollable: true,
-                colorsets: const {
-                  1: Colors.greenAccent,
+                colorsets: {
+                  1: colorScheme.primary, // Use Theme Color
                 },
                 onClick: (value) {
                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                       content: Text(
                           "Activity on $value: ${_heatMapDataSet[value] ?? 0} commits")));
                 },
-                startDate: DateTime.now()
-                    .subtract(const Duration(days: 90)), // Show last 3 months
+                startDate: DateTime.now().subtract(const Duration(days: 90)),
                 endDate: DateTime.now(),
                 size: 20,
                 fontSize: 10,
-                textColor: Colors.white,
-                defaultColor: Colors.white10,
+                textColor: colorScheme.onSurface,
+                defaultColor:
+                    colorScheme.surfaceContainerHighest, // Empty squares
               ),
             ),
 
@@ -127,12 +128,12 @@ class _StatsScreenState extends State<StatsScreen> {
             Row(
               children: [
                 Expanded(
-                    child: _buildStatBox(
-                        "UPTIME (MINS)", "$_totalFocusMinutes", Icons.timer)),
+                    child: _buildStatBox(context, "UPTIME (MINS)",
+                        "$_totalFocusMinutes", Icons.timer)),
                 const SizedBox(width: 15),
                 Expanded(
-                    child: _buildStatBox(
-                        "TOTAL COMMITS", "$_totalCommits", Icons.code)),
+                    child: _buildStatBox(context, "TOTAL COMMITS",
+                        "$_totalCommits", Icons.code)),
               ],
             ),
           ],
@@ -141,76 +142,93 @@ class _StatsScreenState extends State<StatsScreen> {
     );
   }
 
-  Widget _buildRankCard() {
+  Widget _buildRankCard(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final rankColor = _getRankColor(colorScheme);
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: const Color(0xFF0F0F0F),
-        border: Border(left: BorderSide(color: _getRankColor(), width: 4)),
+        color: colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(24),
+        border: Border(left: BorderSide(color: rankColor, width: 6)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text("CURRENT CLEARANCE LEVEL",
+          Text("CURRENT CLEARANCE LEVEL",
               style: TextStyle(
-                  color: Colors.grey, fontSize: 10, fontFamily: 'monospace')),
-          const SizedBox(height: 5),
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 10,
+                  fontFamily: 'monospace',
+                  letterSpacing: 1)),
+          const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(_currentRank.toUpperCase(),
                   style: TextStyle(
-                      color: _getRankColor(),
+                      color: rankColor,
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
                       fontFamily: 'monospace')),
-              Icon(Icons.shield, color: _getRankColor(), size: 40),
+              Icon(Icons.shield, color: rankColor, size: 40),
             ],
           ),
-          const SizedBox(height: 10),
-          LinearProgressIndicator(
-            value: 0.7, // Dynamic progress later
-            backgroundColor: Colors.white10,
-            color: _getRankColor(),
+          const SizedBox(height: 16),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: 0.7, // Dynamic progress logic can go here later
+              minHeight: 6,
+              backgroundColor: colorScheme.surfaceContainerHighest,
+              color: rankColor,
+            ),
           )
         ],
       ),
     );
   }
 
-  Widget _buildStatBox(String label, String value, IconData icon) {
+  Widget _buildStatBox(
+      BuildContext context, String label, String value, IconData icon) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFF111111),
-        borderRadius: BorderRadius.circular(5),
+        color: colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: Colors.white54, size: 20),
-          const SizedBox(height: 10),
+          Icon(icon, color: colorScheme.primary.withOpacity(0.7), size: 24),
+          const SizedBox(height: 12),
           Text(value,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
+              style: TextStyle(
+                  color: colorScheme.onSurface,
+                  fontSize: 28,
                   fontWeight: FontWeight.bold,
                   fontFamily: 'monospace')),
-          const SizedBox(height: 5),
+          const SizedBox(height: 4),
           Text(label,
-              style: const TextStyle(
-                  color: Colors.grey, fontSize: 10, fontFamily: 'monospace')),
+              style: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 10,
+                  fontFamily: 'monospace')),
         ],
       ),
     );
   }
 
-  Color _getRankColor() {
-    if (_currentRank == "Recruit") return Colors.grey;
-    if (_currentRank == "Soldier") return Colors.blueAccent;
-    if (_currentRank == "Sergeant") return Colors.greenAccent;
-    if (_currentRank == "Captain") return Colors.orangeAccent;
-    return Colors.redAccent; // Commander
+  Color _getRankColor(ColorScheme scheme) {
+    // Dynamic Rank Colors based on the Theme!
+    if (_currentRank == "Recruit") return scheme.outline;
+    if (_currentRank == "Soldier") return scheme.secondary;
+    if (_currentRank == "Sergeant") return scheme.primary;
+    if (_currentRank == "Captain") return scheme.tertiary;
+    return scheme.error; // Commander (Red/Intense)
   }
 }

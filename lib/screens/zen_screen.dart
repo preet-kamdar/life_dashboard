@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:ui' as ui;
 import 'dart:math';
-import 'package:intl/intl.dart'; // <--- ADDED THIS IMPORT TO FIX THE ERROR
+import 'package:intl/intl.dart';
 import 'package:life_dashboard/database_helper.dart';
 
 class ZenScreen extends StatefulWidget {
@@ -14,7 +14,6 @@ class ZenScreen extends StatefulWidget {
 
 class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
   bool _isFocusMode = false;
-
   late Timer _systemTicker;
   late DateTime _now;
   final Stopwatch _stopwatch = Stopwatch();
@@ -25,12 +24,13 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
   Offset _dvdPos = const Offset(50, 50);
   Offset _dvdVelocity = const Offset(2.0, 2.0);
   final Size _dvdSize = const Size(220, 130);
-  Color _dvdColor = Colors.cyanAccent;
+  Color _dvdColor = Colors.white; // Will be set dynamically
 
   final List<LiquidDrop> _staticDrops = [];
   final List<LiquidDrop> _fallingDrops = [];
   final Random _rng = Random();
-  ui.Image? _backgroundImage;
+
+  // We remove the static bitmap background and generate it dynamically in paint
 
   final double _dashboardTopHeight = 220.0;
   final double _gap = 20.0;
@@ -40,7 +40,6 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _now = DateTime.now();
-    _loadBackground();
     _initRain();
 
     _systemTicker = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -55,21 +54,6 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
         AnimationController(vsync: this, duration: const Duration(days: 1))
           ..addListener(_gameLoop)
           ..forward();
-  }
-
-  Future<void> _loadBackground() async {
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, 1000, 2000));
-    final paint = Paint()
-      ..shader = const LinearGradient(
-              colors: [Color(0xFF0F2027), Color(0xFF2C5364)],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter)
-          .createShader(const Rect.fromLTWH(0, 0, 1000, 2000));
-    canvas.drawRect(const Rect.fromLTWH(0, 0, 1000, 2000), paint);
-    final pic = recorder.endRecording();
-    final img = await pic.toImage(1000, 2000);
-    setState(() => _backgroundImage = img);
   }
 
   void _initRain() {
@@ -119,11 +103,12 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
   }
 
   void _changeBounceColor() {
-    const colors = [
-      Colors.cyanAccent,
-      Colors.greenAccent,
-      Colors.purpleAccent,
-      Colors.redAccent
+    final colorScheme = Theme.of(context).colorScheme;
+    final colors = [
+      colorScheme.primary,
+      colorScheme.secondary,
+      colorScheme.tertiary,
+      colorScheme.error,
     ];
     setState(() => _dvdColor = colors[_rng.nextInt(colors.length)]);
   }
@@ -136,6 +121,8 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
       } else {
         _stopwatch.start();
         _isFocusMode = true;
+        _dvdColor =
+            Theme.of(context).colorScheme.primary; // Reset color on start
         if (_stopwatch.elapsedMilliseconds < 100) {
           _dvdPos = const Offset(20, 20);
         }
@@ -186,6 +173,7 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
         final Size size = MediaQuery.of(context).size;
         final colorScheme = Theme.of(context).colorScheme;
 
+        // Position Logic
         double timerWidth = (size.width / 2) - 30;
         double timerTop = 20;
         double timerLeft = (size.width / 2) + 10;
@@ -207,13 +195,17 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
         }
 
         return Scaffold(
-          backgroundColor: Colors.transparent,
+          backgroundColor: Colors.transparent, // Important!
           body: Stack(
             children: [
-              if (_backgroundImage != null)
-                Positioned.fill(
-                    child:
-                        CustomPaint(painter: ImagePainter(_backgroundImage!))),
+              // 1. DYNAMIC BACKGROUND
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _DynamicBackgroundPainter(colorScheme: colorScheme),
+                ),
+              ),
+
+              // 2. RAIN & BLUR (High Perf Only)
               if (isHighPerf) ...[
                 Positioned.fill(
                   child: AnimatedOpacity(
@@ -221,29 +213,26 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
                     opacity: _isFocusMode ? 1.0 : 0.0,
                     child: BackdropFilter(
                       filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                      child: Container(color: Colors.black.withOpacity(0.4)),
+                      child: Container(color: Colors.black.withOpacity(0.2)),
                     ),
                   ),
                 ),
-                if (_backgroundImage != null)
-                  Positioned.fill(
-                    child: AnimatedOpacity(
-                      duration: const Duration(seconds: 2),
-                      opacity: _isFocusMode ? 1.0 : 0.0,
-                      child: CustomPaint(
-                        painter: RealisticRainPainter(
-                          staticDrops: _staticDrops,
-                          fallingDrops: _fallingDrops,
-                          background: _backgroundImage!,
-                        ),
+                Positioned.fill(
+                  child: AnimatedOpacity(
+                    duration: const Duration(seconds: 2),
+                    opacity: _isFocusMode ? 1.0 : 0.0,
+                    child: CustomPaint(
+                      painter: RealisticRainPainter(
+                        staticDrops: _staticDrops,
+                        fallingDrops: _fallingDrops,
+                        colorScheme: colorScheme,
                       ),
                     ),
                   ),
-              ] else ...[
-                if (_isFocusMode)
-                  Positioned.fill(
-                      child: Container(color: Colors.black.withOpacity(0.8))),
+                ),
               ],
+
+              // 3. CLOCK CARD (Left Top)
               AnimatedPositioned(
                 duration: const Duration(milliseconds: 800),
                 curve: Curves.easeInOutCubic,
@@ -253,6 +242,8 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
                 height: 220,
                 child: _buildClockCard(colorScheme, isFloating: false),
               ),
+
+              // 4. RAM BUFFER (Bottom Area)
               AnimatedPositioned(
                 duration: const Duration(milliseconds: 800),
                 curve: Curves.easeInOutCubic,
@@ -260,55 +251,61 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
                 left: bufferLeft,
                 width: bufferWidth,
                 height: bufferHeight,
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0F0F0F),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border(
-                        left:
-                            BorderSide(color: colorScheme.tertiary, width: 4)),
-                    boxShadow: [
-                      BoxShadow(
-                          color: Colors.black.withOpacity(0.5), blurRadius: 10)
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: BackdropFilter(
+                    filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                    child: Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainer.withOpacity(0.6),
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(
+                            color: colorScheme.outlineVariant.withOpacity(0.3)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.terminal,
-                              size: 20, color: colorScheme.tertiary),
-                          const SizedBox(width: 10),
-                          Text("RAM BUFFER // TEMP STORAGE",
+                          Row(
+                            children: [
+                              Icon(Icons.terminal,
+                                  size: 16, color: colorScheme.tertiary),
+                              const SizedBox(width: 10),
+                              Text("RAM BUFFER // TEMP STORAGE",
+                                  style: TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: colorScheme.tertiary)),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Expanded(
+                            child: TextField(
+                              controller: _bufferController,
+                              expands: true,
+                              maxLines: null,
                               style: TextStyle(
                                   fontFamily: 'monospace',
-                                  fontSize: 12,
-                                  color: colorScheme.tertiary)),
+                                  color: colorScheme.onSurface,
+                                  fontSize: 14),
+                              decoration: InputDecoration(
+                                  border: InputBorder.none,
+                                  hintText: "> Type temporary thoughts here...",
+                                  hintStyle: TextStyle(
+                                      color: colorScheme.onSurface
+                                          .withOpacity(0.3))),
+                              cursorColor: colorScheme.tertiary,
+                            ),
+                          ),
                         ],
                       ),
-                      const SizedBox(height: 10),
-                      Expanded(
-                        child: TextField(
-                          controller: _bufferController,
-                          expands: true,
-                          maxLines: null,
-                          style: const TextStyle(
-                              fontFamily: 'monospace',
-                              color: Colors.white,
-                              fontSize: 14),
-                          decoration: const InputDecoration(
-                              border: InputBorder.none,
-                              hintText: "> Type temporary thoughts here...",
-                              hintStyle: TextStyle(color: Colors.white12)),
-                          cursorColor: colorScheme.tertiary,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ),
+
+              // 5. BOUNCING CLOCK (DVD)
               if (_isFocusMode && isHighPerf)
                 Positioned(
                   left: _dvdPos.dx,
@@ -320,6 +317,8 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
                         isFloating: true, overrideColor: _dvdColor),
                   ),
                 ),
+
+              // 6. MAIN STOPWATCH CONTROLLER
               AnimatedPositioned(
                 duration: const Duration(milliseconds: 800),
                 curve: Curves.easeInOutCubic,
@@ -334,21 +333,24 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
                     duration: const Duration(milliseconds: 800),
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      color: _isFocusMode
+                          ? colorScheme.surface // Solid when focused
+                          : colorScheme.surfaceContainerHighest
+                              .withOpacity(0.5), // Translucent when idle
                       border: Border.all(
                           color: _stopwatch.isRunning
-                              ? Colors.redAccent
-                              : colorScheme.outline.withOpacity(0.5),
-                          width: _isFocusMode ? 2 : 1),
-                      borderRadius: BorderRadius.circular(24),
-                      color: Colors.black.withOpacity(_isFocusMode ? 0.9 : 0.4),
-                      boxShadow: (_isFocusMode && isHighPerf)
-                          ? [
-                              BoxShadow(
-                                  color: Colors.redAccent.withOpacity(0.2),
-                                  blurRadius: 30,
-                                  spreadRadius: 5)
-                            ]
-                          : [],
+                              ? colorScheme.error
+                              : Colors.transparent,
+                          width: 2),
+                      boxShadow:
+                          (_isFocusMode && isHighPerf && _stopwatch.isRunning)
+                              ? [
+                                  BoxShadow(
+                                      color: colorScheme.error.withOpacity(0.3),
+                                      blurRadius: 40)
+                                ]
+                              : [],
                     ),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -357,8 +359,8 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
                             style: TextStyle(
                                 fontFamily: 'monospace',
                                 color: _stopwatch.isRunning
-                                    ? Colors.redAccent
-                                    : Colors.grey,
+                                    ? colorScheme.error
+                                    : colorScheme.outline,
                                 fontSize: 10,
                                 letterSpacing: 2)),
                         Expanded(
@@ -371,7 +373,7 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
                                 fontSize: 80,
                                 fontWeight: FontWeight.bold,
                                 color: _stopwatch.isRunning
-                                    ? Colors.redAccent
+                                    ? colorScheme.error
                                     : colorScheme.onSurface,
                               ),
                             ),
@@ -381,9 +383,9 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
                           _isFocusMode
                               ? "TAP: PAUSE"
                               : "TAP: RESUME // DBL-TAP: RESET",
-                          style: const TextStyle(
+                          style: TextStyle(
                               fontFamily: 'monospace',
-                              color: Colors.white24,
+                              color: colorScheme.onSurfaceVariant,
                               fontSize: 10),
                         ),
                       ],
@@ -404,11 +406,15 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        border:
-            Border.all(color: textColor.withOpacity(isFloating ? 0.8 : 0.3)),
-        borderRadius: BorderRadius.circular(20),
-        color: Colors.black.withOpacity(isFloating ? 0.6 : 0.3),
-      ),
+          border:
+              Border.all(color: textColor.withOpacity(isFloating ? 0.8 : 0.3)),
+          borderRadius: BorderRadius.circular(24),
+          color: isFloating
+              ? colorScheme.surface.withOpacity(0.9)
+              : colorScheme.surfaceContainerLow.withOpacity(0.5),
+          boxShadow: isFloating
+              ? [BoxShadow(color: textColor.withOpacity(0.3), blurRadius: 20)]
+              : []),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -431,17 +437,31 @@ class _ZenScreenState extends State<ZenScreen> with TickerProviderStateMixin {
   }
 }
 
-class ImagePainter extends CustomPainter {
-  final ui.Image image;
-  ImagePainter(this.image);
+// --- PAINTERS ---
+
+class _DynamicBackgroundPainter extends CustomPainter {
+  final ColorScheme colorScheme;
+  _DynamicBackgroundPainter({required this.colorScheme});
+
   @override
-  void paint(Canvas canvas, Size size) => paintImage(
-      canvas: canvas,
-      rect: Offset.zero & size,
-      image: image,
-      fit: BoxFit.cover);
+  void paint(Canvas canvas, Size size) {
+    // Draws a subtle gradient based on the theme
+    final Rect rect = Offset.zero & size;
+    final Paint paint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          colorScheme.surface,
+          colorScheme.surfaceContainer,
+        ],
+      ).createShader(rect);
+    canvas.drawRect(rect, paint);
+  }
+
   @override
-  bool shouldRepaint(covariant ImagePainter old) => false;
+  bool shouldRepaint(covariant _DynamicBackgroundPainter old) =>
+      old.colorScheme != colorScheme;
 }
 
 class LiquidDrop {
@@ -472,34 +492,32 @@ class LiquidDrop {
 class RealisticRainPainter extends CustomPainter {
   final List<LiquidDrop> staticDrops;
   final List<LiquidDrop> fallingDrops;
-  final ui.Image background;
+  final ColorScheme colorScheme;
+
   RealisticRainPainter(
       {required this.staticDrops,
       required this.fallingDrops,
-      required this.background});
+      required this.colorScheme});
 
   @override
   void paint(Canvas canvas, Size size) {
-    final double scaleX = size.width / background.width;
-    final double scaleY = size.height / background.height;
-    final double baseScale = max(scaleX, scaleY);
-    final matrix = Matrix4.identity()
-      ..scale(baseScale * 2.5, -baseScale * 2.5)
-      ..translate(-100.0, -500.0);
-    final lensPaint = Paint()
-      ..shader = ImageShader(
-          background, TileMode.mirror, TileMode.mirror, matrix.storage)
-      ..colorFilter = const ColorFilter.mode(Colors.black38, BlendMode.dstATop);
-    final shadowPaint = Paint()
+    // Raindrops now tint with Primary color instead of being just dark/glass
+    final Color dropColor = colorScheme.primary.withOpacity(0.1);
+    final Paint paint = Paint()
+      ..style = PaintingStyle.fill
+      ..color = dropColor;
+    final Paint borderPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.8
-      ..color = Colors.black.withOpacity(0.6);
+      ..strokeWidth = 1.0
+      ..color = colorScheme.outline.withOpacity(0.1);
 
     for (var drop in [...staticDrops, ...fallingDrops]) {
       final cx = drop.x * size.width;
       final cy = drop.y * size.height;
       Path path = Path();
+
       if (drop.isFalling) {
+        // Teardrop shape
         path.moveTo(cx, cy - drop.radius * 3.0);
         path.quadraticBezierTo(
             cx + drop.radius, cy + drop.radius, cx, cy + drop.radius);
@@ -507,14 +525,12 @@ class RealisticRainPainter extends CustomPainter {
             cx - drop.radius, cy + drop.radius, cx, cy - drop.radius * 3.0);
         path.close();
       } else {
-        path.moveTo(cx, cy - drop.radius * 0.8);
-        path.quadraticBezierTo(cx + drop.radius, cy, cx, cy + drop.radius);
-        path.quadraticBezierTo(
-            cx - drop.radius, cy, cx, cy - drop.radius * 0.8);
-        path.close();
+        // Hemispherical static drop
+        path.addOval(
+            Rect.fromCircle(center: Offset(cx, cy), radius: drop.radius));
       }
-      canvas.drawPath(path, lensPaint);
-      canvas.drawPath(path, shadowPaint);
+      canvas.drawPath(path, paint);
+      canvas.drawPath(path, borderPaint);
     }
   }
 

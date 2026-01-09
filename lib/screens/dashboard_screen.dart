@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:life_dashboard/database_helper.dart';
 import 'package:intl/intl.dart';
+import 'package:image_picker/image_picker.dart'; // REQUIRED
 import 'package:life_dashboard/screens/mission_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -11,9 +13,10 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  // A unified list of everything happening today
   List<TimelineItem> _timeline = [];
+  List<Map<String, dynamic>> _gallery = []; // NEW: Gallery Data
   final ScrollController _scrollController = ScrollController();
+  final ImagePicker _picker = ImagePicker();
 
   @override
   void initState() {
@@ -25,74 +28,116 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final missions = DatabaseHelper.loadMissions();
     final routines = DatabaseHelper.loadRoutine();
     final journal = DatabaseHelper.loadJournal();
+    final sessions = DatabaseHelper.loadSessions();
+    final gallery = DatabaseHelper.loadGallery(); // NEW
 
     List<TimelineItem> items = [];
 
-    // 1. Convert JOURNAL entries to Timeline Items
+    // 1. JOURNAL
     for (var j in journal) {
-      // Parse the ISO date string
       DateTime dt = DateTime.tryParse(j['date']) ?? DateTime.now();
       items.add(TimelineItem(
         type: TimelineType.journal,
         time: dt,
         title: j['title'],
-        subtitle: j['id'].toString().substring(0, 7), // The Git Hash
+        subtitle: "Commit ${j['id'].toString().substring(0, 7)}",
         data: j,
       ));
     }
 
-    // 2. Convert ROUTINES to Timeline Items
-    // Since routines don't have timestamps in your DB yet, we'll simulate them
-    // spreading through the day or group them at "Now" for visibility.
-    // For this prototype, we'll assign them a "Target Time" based on index to show the flow.
+    // 2. ROUTINES
     DateTime routineBaseTime =
         DateTime.now().subtract(const Duration(hours: 4));
     for (var i = 0; i < routines.length; i++) {
       var r = routines[i];
       items.add(TimelineItem(
         type: TimelineType.routine,
-        time: routineBaseTime
-            .add(Duration(hours: i)), // Fake spread for visual demo
+        time: routineBaseTime.add(Duration(minutes: i * 30)),
         title: r['title'],
-        subtitle: r['isCompleted'] ? "Completed" : "Pending Protocol",
+        subtitle: r['isCompleted'] ? "Protocol Complete" : "Pending Action",
         isCompleted: r['isCompleted'],
         data: r,
-        index: i, // Needed for toggling
+        index: i,
       ));
     }
 
-    // 3. Convert MISSIONS to Timeline Items
+    // 3. MISSIONS
     for (var m in missions) {
-      // Missions usually don't have a specific "start time" saved in the basic DB helper
-      // So we will default them to "Now" to keep them visible at the top/center
       items.add(TimelineItem(
         type: TimelineType.mission,
-        time: DateTime.now(), // Always relevant "Now"
+        time: DateTime.now(),
         title: m['title'],
-        subtitle: "${m['duration']} minutes",
+        subtitle: "${m['duration']} min objective",
         data: m,
       ));
     }
 
-    // 4. SORT CHRONOLOGICALLY (Newest First)
+    // 4. VENT SESSIONS
+    for (var s in sessions) {
+      DateTime dt = DateTime.tryParse(s['date'] ?? '') ?? DateTime.now();
+      items.add(TimelineItem(
+        type: TimelineType.vent,
+        time: dt,
+        title: s['topic'] ?? "Neural Session",
+        subtitle: "Logged with Sergeant",
+        data: s,
+      ));
+    }
+
     items.sort((a, b) => b.time.compareTo(a.time));
 
     if (mounted) {
       setState(() {
         _timeline = items;
+        _gallery = gallery;
       });
     }
   }
 
-  // --- ACTIONS ---
+  // --- NEW: CAMERA LOGIC ---
+  Future<void> _captureDailyPhoto() async {
+    try {
+      final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
+      if (photo != null) {
+        // Save to DB
+        await DatabaseHelper.saveGalleryImage(photo.path, "Daily Log");
+        _loadData(); // Refresh UI
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Camera Error: $e")),
+      );
+    }
+  }
+
+  void _showImagePreview(String path, String date) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Image.file(File(path)),
+            ),
+            const SizedBox(height: 10),
+            Text(date,
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _toggleRoutine(int index, bool? value) async {
-    // We need to find the actual routine list index
     final routines = DatabaseHelper.loadRoutine();
-    // In a real app, use IDs. Here we trust the index passed from the item.
     if (index < routines.length) {
       routines[index]['isCompleted'] = value;
       await DatabaseHelper.saveRoutine(routines);
-      _loadData(); // Reload to refresh timeline UI
+      _loadData();
     }
   }
 
@@ -105,13 +150,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final now = DateTime.now();
+    final String todayStr = DateFormat('yyyy-MM-dd').format(now);
+
+    // Check if we took a photo today
+    bool hasPhotoToday = _gallery.any((img) => img['date'] == todayStr);
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
       body: CustomScrollView(
         controller: _scrollController,
         slivers: [
-          // 1. MODERN HEADER
+          // 1. HEADER
           SliverAppBar.large(
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -129,18 +178,117 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
             centerTitle: false,
+            actions: [
+              // Quick Camera Button (if not taken today)
+              if (!hasPhotoToday)
+                Padding(
+                  padding: const EdgeInsets.only(right: 16),
+                  child: IconButton.filledTonal(
+                    onPressed: _captureDailyPhoto,
+                    icon: const Icon(Icons.camera_alt_rounded),
+                    tooltip: "Log Today's Visual",
+                  ),
+                ),
+            ],
           ),
 
-          // 2. THE TIMELINE STREAM
+          // 2. VISUAL LOG (PHOTOS STYLE)
+          // Only show if there are images
+          if (_gallery.isNotEmpty) ...[
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              sliver: SliverToBoxAdapter(
+                child: Row(
+                  children: [
+                    Icon(Icons.photo_library_outlined,
+                        size: 14, color: colorScheme.onSurfaceVariant),
+                    const SizedBox(width: 8),
+                    Text("VISUAL LOG",
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.0,
+                            color: colorScheme.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              sliver: SliverGrid(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3, // 3 columns like Photos Month View
+                  mainAxisSpacing: 4,
+                  crossAxisSpacing: 4,
+                  childAspectRatio: 1.0, // Square crops
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    // Limit to recent 6 photos on dashboard to keep it clean
+                    // Or remove limit to show all. Let's show recent 6.
+                    if (index >= 6) return null;
+                    if (index >= _gallery.length) return null;
+
+                    final img = _gallery[index];
+                    final File file = File(img['path']);
+
+                    return GestureDetector(
+                      onTap: () => _showImagePreview(img['path'], img['date']),
+                      onLongPress: () async {
+                        // Simple delete confirmation
+                        await DatabaseHelper.deleteGalleryImage(img['id']);
+                        _loadData();
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(
+                              12), // Photos Style Rounding
+                          image: file.existsSync()
+                              ? DecorationImage(
+                                  image: FileImage(file), fit: BoxFit.cover)
+                              : null,
+                        ),
+                        child: !file.existsSync()
+                            ? const Icon(Icons.broken_image, size: 20)
+                            : null,
+                      ),
+                    );
+                  },
+                  childCount: _gallery.length > 6 ? 6 : _gallery.length,
+                ),
+              ),
+            ),
+          ],
+
+          // 3. TIMELINE HEADER
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Row(
+                children: [
+                  Icon(Icons.notifications_none_rounded,
+                      size: 14, color: colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                  Text("STREAM",
+                      style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.0,
+                          color: colorScheme.onSurfaceVariant)),
+                ],
+              ),
+            ),
+          ),
+
+          // 4. TIMELINE STREAM
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
             sliver: SliverList(
               delegate: SliverChildBuilderDelegate(
                 (context, index) {
                   final item = _timeline[index];
-                  final isLast = index == _timeline.length - 1;
-
-                  return _buildTimelineRow(context, item, isLast);
+                  return _buildTimelineRow(context, item);
                 },
                 childCount: _timeline.length,
               ),
@@ -151,183 +299,185 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildTimelineRow(
-      BuildContext context, TimelineItem item, bool isLast) {
+  Widget _buildTimelineRow(BuildContext context, TimelineItem item) {
     final colorScheme = Theme.of(context).colorScheme;
     final timeStr = DateFormat('HH:mm').format(item.time);
 
-    return IntrinsicHeight(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // A. TIME COLUMN
+          // Time Column
           SizedBox(
             width: 50,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                const SizedBox(height: 16), // Align with top of card
-                Text(
-                  timeStr,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: colorScheme.onSurfaceVariant.withOpacity(0.7),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // B. THE LINE & DOT
-          SizedBox(
-            width: 40,
-            child: Stack(
-              alignment: Alignment.topCenter,
-              children: [
-                // The Line
-                Positioned(
-                  top: 0,
-                  bottom: 0,
-                  left: 19, // Center of width 40
-                  child: Container(
-                    width: 2,
-                    color: colorScheme.outlineVariant.withOpacity(0.5),
-                  ),
-                ),
-                // The Dot (Icon)
-                Container(
-                  margin: const EdgeInsets.only(top: 14), // Align with card top
-                  width: 20, // slightly bigger than journal line
-                  height: 20,
-                  decoration: BoxDecoration(
-                      color: colorScheme.surface,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: _getTypeColor(item.type, colorScheme),
-                        width: 3,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: colorScheme.surface,
-                          blurRadius: 4,
-                          spreadRadius: 2,
-                        )
-                      ]),
-                ),
-              ],
-            ),
-          ),
-
-          // C. THE CONTENT CARD
-          Expanded(
             child: Padding(
-              padding: const EdgeInsets.only(bottom: 24),
-              child: _buildItemCard(context, item),
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(
+                timeStr,
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.onSurfaceVariant.withOpacity(0.6),
+                ),
+              ),
             ),
+          ),
+
+          const SizedBox(width: 16),
+
+          // Content Card
+          Expanded(
+            child: _buildItemCard(context, item),
           ),
         ],
       ),
     );
   }
 
-  Color _getTypeColor(TimelineType type, ColorScheme scheme) {
-    switch (type) {
-      case TimelineType.mission:
-        return scheme.primary;
-      case TimelineType.routine:
-        return scheme.secondary;
-      case TimelineType.journal:
-        return scheme.tertiary;
-    }
-  }
-
   Widget _buildItemCard(BuildContext context, TimelineItem item) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    // --- 1. MISSION CARD ---
+    // --- MISSION ---
     if (item.type == TimelineType.mission) {
-      return InkWell(
-        onTap: () => _navigateTo(const MissionScreen()),
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: colorScheme.primaryContainer,
-            borderRadius: BorderRadius.circular(20),
+      return Card(
+        color: colorScheme.primaryContainer,
+        child: InkWell(
+          onTap: () => _navigateTo(const MissionScreen()),
+          borderRadius: BorderRadius.circular(24),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.flag,
+                        size: 16, color: colorScheme.onPrimaryContainer),
+                    const SizedBox(width: 8),
+                    Text("ACTIVE MISSION",
+                        style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.onPrimaryContainer
+                                .withOpacity(0.7))),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(item.title,
+                    style: Theme.of(context).textTheme.titleMedium),
+              ],
+            ),
           ),
+        ),
+      );
+    }
+
+    // --- ROUTINE ---
+    if (item.type == TimelineType.routine) {
+      final isDone = item.isCompleted;
+      return Card(
+        color: isDone
+            ? colorScheme.surfaceContainerHighest.withOpacity(0.5)
+            : colorScheme.surfaceContainerHigh,
+        child: InkWell(
+          onTap: () => _toggleRoutine(item.index!, !isDone),
+          borderRadius: BorderRadius.circular(24),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(item.title,
+                          style: TextStyle(
+                              decoration:
+                                  isDone ? TextDecoration.lineThrough : null,
+                              color: isDone
+                                  ? colorScheme.onSurfaceVariant
+                                  : colorScheme.onSurface,
+                              fontWeight: FontWeight.w600)),
+                      Text(item.subtitle,
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: colorScheme.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+                Checkbox(
+                  value: isDone,
+                  onChanged: (v) => _toggleRoutine(item.index!, v),
+                  shape: const CircleBorder(),
+                  activeColor: colorScheme.primary,
+                )
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // --- JOURNAL ---
+    if (item.type == TimelineType.journal) {
+      return Card(
+        color: colorScheme.surfaceContainerLow,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side:
+                BorderSide(color: colorScheme.outlineVariant.withOpacity(0.5))),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  Icon(Icons.flag_rounded,
-                      size: 16, color: colorScheme.onPrimaryContainer),
+                  Icon(Icons.commit, size: 16, color: colorScheme.tertiary),
                   const SizedBox(width: 8),
-                  Text("ACTIVE OBJECTIVE",
+                  Text(item.subtitle, // Hash
                       style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1,
-                          color:
-                              colorScheme.onPrimaryContainer.withOpacity(0.7))),
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                          color: colorScheme.tertiary,
+                          fontWeight: FontWeight.bold)),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 4),
               Text(item.title,
-                  style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: colorScheme.onPrimaryContainer)),
-              Text("Target Duration: ${item.subtitle}",
-                  style: TextStyle(
-                      color: colorScheme.onPrimaryContainer.withOpacity(0.8))),
+                  style: const TextStyle(fontWeight: FontWeight.w500)),
             ],
           ),
         ),
       );
     }
 
-    // --- 2. ROUTINE CARD ---
-    if (item.type == TimelineType.routine) {
-      final isDone = item.isCompleted;
-      return InkWell(
-        onTap: () => _toggleRoutine(item.index!, !isDone),
-        borderRadius: BorderRadius.circular(16),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-              color: isDone
-                  ? colorScheme.surfaceContainerHighest.withOpacity(0.5)
-                  : colorScheme.surfaceContainer,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: isDone ? Colors.transparent : colorScheme.outlineVariant,
-              )),
+    // --- VENT SESSION ---
+    if (item.type == TimelineType.vent) {
+      return Card(
+        color: colorScheme.errorContainer.withOpacity(0.3),
+        elevation: 0,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
           child: Row(
             children: [
-              Icon(
-                isDone ? Icons.check_circle : Icons.circle_outlined,
-                color: isDone
-                    ? colorScheme.secondary
-                    : colorScheme.onSurfaceVariant,
-              ),
+              Icon(Icons.psychology, color: colorScheme.error, size: 20),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(item.title,
+                    Text("NEURAL LOG",
                         style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          decoration:
-                              isDone ? TextDecoration.lineThrough : null,
-                          color: isDone
-                              ? colorScheme.onSurfaceVariant
-                              : colorScheme.onSurface,
-                        )),
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.error)),
+                    Text(item.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: colorScheme.onSurface)),
                   ],
                 ),
               ),
@@ -337,45 +487,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       );
     }
 
-    // --- 3. JOURNAL CARD ---
-    if (item.type == TimelineType.journal) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: colorScheme.surface, // Blend with bg
-          borderRadius: BorderRadius.circular(16),
-          border:
-              Border.all(color: colorScheme.outlineVariant.withOpacity(0.5)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text("commit ${item.subtitle}",
-                    style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 11,
-                        color: colorScheme.tertiary,
-                        fontWeight: FontWeight.bold)),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(item.title,
-                style:
-                    const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-          ],
-        ),
-      );
-    }
-
     return const SizedBox.shrink();
   }
 }
 
-// --- HELPER CLASSES ---
-
-enum TimelineType { mission, routine, journal }
+enum TimelineType { mission, routine, journal, vent }
 
 class TimelineItem {
   final TimelineType type;
@@ -384,7 +500,7 @@ class TimelineItem {
   final String subtitle;
   final bool isCompleted;
   final dynamic data;
-  final int? index; // Only for routines to toggle them
+  final int? index;
 
   TimelineItem({
     required this.type,

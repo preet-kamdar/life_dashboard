@@ -9,6 +9,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  dynamic_color: ^1.7.0
+
+  image_picker: ^1.0.7
+  path_provider: ^2.1.2
 
   shared_preferences: ^2.3.2
   intl: ^0.19.0
@@ -23,7 +27,7 @@ dependencies:
   uuid: ^4.5.2           # NEW: For unique IDs (Journal/Chat)
   
   # UI & Fonts
-  google_fonts: ^6.1.0
+  google_fonts: ^6.2.1
   
   # Audio
   audioplayers: ^6.0.0   # NEW: For the Zen Timer Gong
